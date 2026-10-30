@@ -1,0 +1,23 @@
+# ROS2 build outputs
+/build/
+/install/
+/log/
+
+# External upstream repositories
+/external/
+
+# Python
+__pycache__/
+*.pyc
+
+# Archives and backups
+*.zip
+*.bak
+
+# Windows metadata
+*:Zone.Identifier
+
+# OS files
+.DS_Store
+/src/rohand_ros2_pkg/
+/src/rohand_ros2_pkg/
