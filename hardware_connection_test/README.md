@@ -22,32 +22,21 @@
 
 상세 실행 방법은 **5장(USB 연결), 6장(실물 테스트), 7장(시뮬레이터 테스트)**에 정리했다.
 
-## 2. 디렉터리 및 파일
+## 2. 로봇 핸드 테스트 파일
 
-프로젝트 루트는 `~/TactileData_Collection_Pipeline`이다.
+프로젝트 루트는 `~/TactileData_Collection_Pipeline`이다. 현재 GitHub에 포함된 로봇 핸드 관련 파일은 다음과 같다.
 
-```text
-TactileData_Collection_Pipeline/
-├── build/                         # colcon 빌드 중간 결과
-├── external/
-│   └── rohand_mujoco/             # 제조사 공식 MuJoCo 모델 (유지)
-├── hardware_connection_test/
-│   ├── README.md                  # 이 문서 (통합 안내)
-│   ├── README_FULL_RANGE.md       # 전체 범위 제어 버전의 기존 안내
-│   ├── README_REAL.md             # 초기 실물 제어 버전의 기존 안내
-│   ├── rohand_sim_ros2.py         # MuJoCo + ROS2 브리지
-│   ├── rohand_keyboard_ros2.py    # MuJoCo 제어용 키보드 노드
-│   ├── rohand_real_ros2.py        # 실물 AP002 + Modbus-RTU 브리지 (최신)
-│   ├── rohand_real_keyboard_ros2.py # 실물 제어용 키보드 노드 (최신)
-│   ├── *.bak                      # 이전 버전 백업 (있는 경우)
-│   ├── *.zip                      # 배포 압축파일 보관본 (실행에는 불필요)
-│   └── *:Zone.Identifier         # Windows 다운로드 출처 정보 (실행에는 불필요)
-├── install/                       # colcon 설치 결과
-├── log/                           # colcon 로그
-└── src/                           # ROS2 소스 패키지
-```
+| 파일 | 역할 |
+| --- | --- |
+| `README.md` | 이 문서: 연결·통신·제어 테스트 안내 |
+| `rohand_sim_ros2.py` | ROS2와 AP002 MuJoCo 시뮬레이터를 연결하는 브리지 |
+| `rohand_keyboard_ros2.py` | 시뮬레이터용 키보드 제어 노드 |
+| `rohand_real_ros2.py` | 실제 AP002와 Modbus-RTU 통신하는 ROS2 브리지 |
+| `rohand_real_keyboard_ros2.py` | 실제 로봇 핸드용 키보드 제어 노드 |
 
-각 `.py` 파일은 직접 실행하는 독립 Python 프로그램이다. **이 예제 자체는 `colcon build`가 필요하지 않다.** 시뮬레이션과 실물용 파일은 서로 다른 토픽을 사용하며, 실물 로봇 핸드를 연결하지 않아도 시뮬레이터 예제는 실행할 수 있다.
+위 Python 파일은 직접 실행하는 독립 프로그램이므로 **이 예제 자체는 `colcon build`가 필요하지 않다.** 시뮬레이션과 실물용 코드는 서로 다른 ROS2 토픽을 사용한다.
+
+GitHub에서 제외한 로컬 자료는 `build/`, `install/`, `log/`, `external/`, `src/rohand_ros2_pkg/` 및 ZIP·BAK·Windows `Zone.Identifier` 파일이다. 이들은 로컬 환경에 남아 있을 수 있지만 현재 저장소의 추적 대상은 아니다.
 
 ## 3. 실제 AP002 통신 방식
 
@@ -134,6 +123,17 @@ python3 -m pip install --user pymodbus==3.7.2 pyserial==3.5
 ```
 
 ROS2 Python 코드는 **각 터미널에서** `source /opt/ros/humble/setup.bash`를 실행해야 한다. `mujoco`가 없다면 해당 Python 환경에 `python3 -m pip install --user mujoco`로 설치한다.
+
+**MuJoCo 모델 준비:** `external/rohand_mujoco`는 이 프로젝트의 GitHub 저장소에 포함되지 않는다. 새로 클론한 개발환경에서 시뮬레이터를 실행하려면 제조사의 공식 모델을 별도로 내려받는다(이미 존재하면 생략).
+
+```bash
+cd ~/TactileData_Collection_Pipeline
+mkdir -p external
+git clone https://github.com/oymotion/rohand_mujoco.git external/rohand_mujoco
+```
+
+실물 AP002 제어 예제는 MuJoCo 모델 없이 실행할 수 있다.
+
 
 ## 5. Windows USB → WSL2 연결 절차 (실물 핸드)
 
@@ -326,8 +326,6 @@ python3 hardware_connection_test/rohand_keyboard_ros2.py
 | Modbus timeout / 응답 실패 | 24V 전원, 통신 배선, Slave ID `2`, baudrate `115200`, USB 연결 확인 |
 | `rclpy` import 실패 | 해당 터미널에서 `source /opt/ros/humble/setup.bash` |
 | 명령 입력했으나 실물 움직임 없음 | 브리지에 `--enable-motion`과 `ENABLE`이 적용됐는지, ROS2 토픽 연결 및 터미널 A 오류 확인 |
-
-> 이전 배포 ZIP과 `.bak`는 코드 변경 이력을 보관하기 위한 파일이다. 실행 프로그램은 **최신 `.py` 파일**이며 ZIP이나 `*:Zone.Identifier`는 실행에 필요하지 않다. 정리하려면 원본을 보관할지 먼저 결정한 후 별도 삭제한다.
 
 ## 9. 공식 참고 자료
 
