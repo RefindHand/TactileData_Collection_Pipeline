@@ -4,6 +4,7 @@ import math
 import socket
 
 import rclpy
+from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from std_msgs.msg import Float32MultiArray
 
@@ -121,15 +122,15 @@ def main(args=None):
         node = HandTrackingNode()
         rclpy.spin(node)
 
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, ExternalShutdownException):
         pass
 
     finally:
         if node is not None:
             node.destroy_node()
 
-        if rclpy.ok():
-            rclpy.shutdown()
+        # Ctrl+C under ros2 launch may already have shut the context down
+        rclpy.try_shutdown()
 
 
 if __name__ == "__main__":
