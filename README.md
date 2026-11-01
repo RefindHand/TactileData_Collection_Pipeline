@@ -22,7 +22,7 @@
 | 손가락 노드 ×6 (액추에이터별 각도·힘) + 하드웨어 백엔드 (MuJoCo / 실물) | `src/finger_node` | [README](src/finger_node/README.md) |
 | 자세 명령 노드 | `src/pose_command` | [README](src/pose_command/README.md) |
 | 피드백 노드 (각도·힘·촉각 피드백) | `src/feedback_node` | [README](src/feedback_node/README.md) |
-| 로봇 핸드 카메라 노드 | 미정 | 작업 중 (Gemini 305 MuJoCo 가상 카메라 테스트: [README](gripper_camera/README.md)) |
+| 로봇 핸드 카메라 노드 (Gemini 305, 현재 MuJoCo 가상 카메라) | `src/gripper_camera` | [README](src/gripper_camera/README.md) |
 | 전체 실행 (통합) | `src/hand_bringup` | [README](src/hand_bringup/README.md) |
 
 ```text
@@ -41,9 +41,9 @@ TactileData_Collection_Pipeline/
 │   ├── hand_tracking/         #   웹캠 손 인식 UDP 수신 노드 + Ubuntu용 웹캠 실행
 │   ├── finger_node/           #   손가락 노드 + 하드웨어 백엔드 (MuJoCo / 실물 AP002)
 │   ├── pose_command/          #   자세 명령 노드
-│   └── feedback_node/         #   피드백 노드
+│   ├── feedback_node/         #   피드백 노드
+│   └── gripper_camera/        #   Gemini 305 가상 RGB-D 카메라 노드 (MuJoCo)
 ├── windows_sender/            # Windows 웹캠 손 인식 프로그램 (ROS 패키지 아님)
-├── gripper_camera/            # Gemini 305 가상 RGB-D 카메라 MuJoCo 테스트 (ROS 패키지 아님)
 ├── hardware_connection_test/  # 로봇 핸드 시뮬레이션·실물 연결 테스트
 ├── external/                  # 제조사 등 외부 소스 (Git 추적 제외)
 ├── build/                     # ROS2 빌드 결과 (Git 추적 제외)

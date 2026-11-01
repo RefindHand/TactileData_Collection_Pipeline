@@ -9,6 +9,7 @@ live in its own OpenCV window. Only the selected stream is rendered/computed:
   4 Disparity     render left + right, StereoSGBM
   5 Depth         same as 4, then depth = fx * baseline / disparity
 Camera geometry and intrinsics live in model/gemini305.xml.
+The ROS2 node (camera_node.py) reuses the scene, rendering and stereo matching from here.
 """
 import argparse
 import math
@@ -26,7 +27,7 @@ import numpy as np
 
 HERE = Path(__file__).resolve().parent
 CAMERA_XML = HERE / 'model' / 'gemini305.xml'
-HAND_XML = HERE.parent / 'external' / 'rohand_mujoco' / 'AP002' / 'model' / 'rohand_gen2_AP002_right.xml'
+HAND_XML_RELATIVE = Path('external/rohand_mujoco/AP002/model/rohand_gen2_AP002_right.xml')
 
 CAMERA_BODY = 'gemini305'
 CAMERA_GEOM_GROUP = 3  # housing mesh group, hidden from the virtual cameras
@@ -37,6 +38,16 @@ DEPTH_RANGE = (0.07, 0.50)  # datasheet ideal range (m), used for the colormap
 MOTION_PERIOD = 4.0  # s, fingers open -> close -> open
 
 STREAMS = {1: 'RGB', 2: 'Stereo Left', 3: 'Stereo Right', 4: 'Disparity Map', 5: 'Depth Map'}
+
+
+def find_hand_xml():
+    """Official AP002 right-hand MJCF: $ROHAND_MODEL_XML, else ./external/... from cwd or this file upward."""
+    if os.environ.get('ROHAND_MODEL_XML'):
+        return os.environ['ROHAND_MODEL_XML']
+    for base in (Path.cwd(), *Path.cwd().parents, *HERE.parents):
+        if (base / HAND_XML_RELATIVE).is_file():
+            return str(base / HAND_XML_RELATIVE)
+    return str(HAND_XML_RELATIVE)
 
 
 def build_model(hand_xml, width, height, pos=None, euler=None):
@@ -75,6 +86,8 @@ class VirtualGemini305:
     """Renders the Gemini 305 streams; disparity and depth come from stereo matching."""
 
     def __init__(self, model, width, height):
+        self.model = model
+        self.width, self.height = width, height
         self.renderer = mujoco.Renderer(model, height, width)
         self.renderer.scene.flags[mujoco.mjtRndFlag.mjRND_SHADOW] = False  # halves render time
         self.option = mujoco.MjvOption()
@@ -82,11 +95,15 @@ class VirtualGemini305:
         left, right = model.camera('stereo_left'), model.camera('stereo_right')
         # both cameras hang off the same body, so the local offset is the baseline
         self.baseline = float(np.linalg.norm(right.pos - left.pos))
-        self.fx = 0.5 * height / math.tan(math.radians(left.fovy[0]) / 2)  # square pixels: fx = fy
+        self.fx = self.focal('stereo_left')
         self.sgbm = cv2.StereoSGBM_create(
             minDisparity=0, numDisparities=NUM_DISPARITIES, blockSize=5,
             P1=8 * 5 * 5, P2=32 * 5 * 5, disp12MaxDiff=1, uniquenessRatio=10,
             speckleWindowSize=100, speckleRange=2, mode=cv2.STEREO_SGBM_MODE_SGBM_3WAY)
+
+    def focal(self, camera):
+        """Focal length in px from the MuJoCo fovy (square pixels: fx = fy)."""
+        return 0.5 * self.height / math.tan(math.radians(self.model.camera(camera).fovy[0]) / 2)
 
     def render(self, data, camera):
         """RGB uint8 image of one MuJoCo camera."""
@@ -115,18 +132,26 @@ class VirtualGemini305:
             camera = 'stereo_left' if stream == 2 else 'stereo_right'
             return cv2.cvtColor(self.render(data, camera), cv2.COLOR_RGB2BGR)
         if stream == 4:
-            disp = self.disparity(data)
-            image = colorize(disp / NUM_DISPARITIES, disp > 0)
-            return label(image, f'center {disp[disp.shape[0] // 2, disp.shape[1] // 2]:.1f} px')
-        depth = self.depth(data)
-        near, far = DEPTH_RANGE
-        valid = (depth >= near) & (depth <= far)
-        image = colorize((far - depth) / (far - near), valid)  # near = red, far = blue
-        z = depth[depth.shape[0] // 2, depth.shape[1] // 2]
-        return label(image, f'center {z * 1000:.0f} mm' if z > 0 else 'center invalid')
+            return disparity_image(self.disparity(data))
+        return depth_image(self.depth(data))
 
     def close(self):
         self.renderer.close()
+
+
+def disparity_image(disp):
+    """Colorized disparity (BGR) with the center value."""
+    image = colorize(disp / NUM_DISPARITIES, disp > 0)
+    return label(image, f'center {disp[disp.shape[0] // 2, disp.shape[1] // 2]:.1f} px')
+
+
+def depth_image(depth):
+    """Colorized depth (BGR, near = red, far = blue) with the center value."""
+    near, far = DEPTH_RANGE
+    valid = (depth >= near) & (depth <= far)
+    image = colorize((far - depth) / (far - near), valid)
+    z = depth[depth.shape[0] // 2, depth.shape[1] // 2]
+    return label(image, f'center {z * 1000:.0f} mm' if z > 0 else 'center invalid')
 
 
 def colorize(normalized, valid):
@@ -149,8 +174,17 @@ def animate_fingers(model, data, t):
     data.ctrl[:] = lo + (hi - lo) * phase
 
 
+def step_physics(model, data, now, animate=True):
+    """Advance physics to wall-clock time `now` (s), capped so slow frames do not pile up."""
+    if animate:
+        animate_fingers(model, data, now)
+    target = min(now, data.time + 0.1)
+    while data.time < target:
+        mujoco.mj_step(model, data)
+
+
 def print_menu():
-    print('\n출력할 영상 번호를 입력하세요 (영상 창이 떠 있는 동안에도 바꿀 수 있음)')
+    print('\n출력할 영상 번호를 입력하세요 (실행 중에도 바꿀 수 있음)')
     for number, name in STREAMS.items():
         print(f'  {number}. {name}')
     print('  0. 종료')
@@ -182,7 +216,7 @@ def use_software_gl_on_wsl():
 def main():
     use_software_gl_on_wsl()
     parser = argparse.ArgumentParser(description='Gemini 305 virtual RGB-D camera (MuJoCo, no ROS)')
-    parser.add_argument('--hand-xml', default=os.environ.get('ROHAND_MODEL_XML', str(HAND_XML)),
+    parser.add_argument('--hand-xml', default=find_hand_xml(),
                         help='AP002 MJCF (default: $ROHAND_MODEL_XML or external/rohand_mujoco/...)')
     parser.add_argument('--resolution', choices=RESOLUTIONS, default='848x530')
     parser.add_argument('--pos', type=float, nargs=3, metavar=('X', 'Y', 'Z'),
@@ -237,13 +271,7 @@ def main():
                     print('0~5 중에서 입력하세요.')
                 prompt()
 
-            # advance physics to wall-clock time (capped so slow frames do not pile up)
-            now = time.monotonic() - start
-            if not args.static:
-                animate_fingers(model, data, now)
-            target = min(now, data.time + 0.1)
-            while data.time < target:
-                mujoco.mj_step(model, data)
+            step_physics(model, data, time.monotonic() - start, not args.static)
             if viewer is not None and viewer.is_running():
                 viewer.sync()
 
