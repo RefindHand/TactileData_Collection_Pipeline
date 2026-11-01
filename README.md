@@ -23,6 +23,7 @@
 | 자세 명령 노드 | `src/pose_command` | [README](src/pose_command/README.md) |
 | 피드백 노드 (각도·힘·촉각 피드백) | `src/feedback_node` | [README](src/feedback_node/README.md) |
 | 로봇 핸드 카메라 노드 | 미정 | 작업 중 |
+| 전체 실행 (통합) | `src/hand_bringup` | [README](src/hand_bringup/README.md) |
 
 ```text
 웹캠 ──/hand_landmarks──▶ 자세 명령 ──/finger/<f>/command──▶ 손가락 노드 ×6 ──▶ 로봇 핸드 (MuJoCo 또는 실물)
@@ -36,7 +37,8 @@
 ```text
 TactileData_Collection_Pipeline/
 ├── src/                       # ROS2 패키지 (모든 패키지는 여기에 둔다)
-│   ├── hand_tracking/         #   웹캠 손 인식 UDP 수신 노드
+│   ├── hand_bringup/          #   전체 파이프라인 launch
+│   ├── hand_tracking/         #   웹캠 손 인식 UDP 수신 노드 + Ubuntu용 웹캠 실행
 │   ├── finger_node/           #   손가락 노드 + 하드웨어 백엔드 (MuJoCo / 실물 AP002)
 │   ├── pose_command/          #   자세 명령 노드
 │   └── feedback_node/         #   피드백 노드
@@ -61,7 +63,17 @@ source install/setup.bash
 
 특정 패키지만 빌드하려면 `colcon build --symlink-install --packages-select feedback_node`처럼 지정합니다.
 
-## 로봇 핸드 움직이기 (손가락 노드)
+## 전체 실행
+
+```bash
+ros2 launch hand_bringup pipeline.launch.py                                    # MuJoCo + 이 PC 웹캠
+ros2 launch hand_bringup pipeline.launch.py team_sender:=remote                # 웹캠은 Windows에서 (WSL)
+ros2 launch hand_bringup pipeline.launch.py backend:=real enable_motion:=true  # 실물 AP002
+```
+
+웹캠 창이 뜨면 손을 한 번 끝까지 쥐었다 펴고 엄지를 크게 돌린 뒤(자동 보정) 손을 움직입니다. 자세한 내용은 [hand_bringup README](src/hand_bringup/README.md)를 참고합니다.
+
+## 로봇 핸드만 움직이기 (손가락 노드)
 
 ```bash
 ros2 launch finger_node fingers.launch.py                                   # MuJoCo 시뮬레이션
@@ -79,7 +91,7 @@ ros2 topic echo /finger/index/angle_force
 
 | 항목 | Ubuntu 22.04 (데스크탑, AGX Orin) | Windows + WSL2 |
 | --- | --- | --- |
-| 웹캠 | Ubuntu에서 직접 사용 | Windows에서 `windows_sender/`를 실행해 UDP로 전송 |
+| 웹캠 | Ubuntu에서 직접 사용 (`team_sender:=local`, 기본) | Windows에서 `windows_sender/`를 실행해 UDP로 전송 (`team_sender:=remote`) |
 | 실물 USB (`/dev/ttyUSB0`) | 바로 인식 | Windows에서 `usbipd`로 WSL에 연결 ([안내서](hardware_connection_test/README.md)) |
 | MuJoCo 창 | 바로 표시 | WSLg 필요 (`wsl --update`) |
 | 다른 PC와 ROS2 통신 | 같은 `ROS_DOMAIN_ID` | `.wslconfig`에 `networkingMode=mirrored` 설정 + 같은 `ROS_DOMAIN_ID` |
