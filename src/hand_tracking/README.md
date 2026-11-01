@@ -19,6 +19,16 @@ Windows 웹캠 → Py_webCamReader.py (MediaPipe)
 
 UDP 메시지 형식 (JSON): `{"landmarks": [63개], "values": [6개]}`. `values`는 보정 전에는 없습니다.
 
+> **Ubuntu에서 실행 (데스크탑, AGX Orin):** 웹캠이 같은 PC에 있으면 Windows 없이 실행할 수 있습니다. `linux_webcam_sender`가 `Py_webCamReader.py`를 수정 없이 실행하면서 Windows 전용인 두 부분만 바꿉니다 (카메라 `CAP_DSHOW` → `CAP_V4L2`, WSL IP 자동 탐지 → `127.0.0.1`).
+>
+> ```bash
+> pip install --user mediapipe==0.10.14 "numpy<2" "opencv-contrib-python<4.12"   # 최초 1회
+> ros2 run hand_tracking hand_tracking_node                  # 터미널 1
+> ros2 run hand_tracking linux_webcam_sender --device 0      # 터미널 2 (프로젝트 루트에서)
+> ```
+>
+> 전체 파이프라인은 `ros2 launch hand_bringup pipeline.launch.py` 하나로 두 노드를 함께 실행합니다. 아래는 Windows + WSL 구성입니다.
+
 **총 3개의 콘솔**을 사용합니다. 콘솔 ①과 ③은 **WSL Ubuntu**, 콘솔 ②는 **Windows PowerShell**입니다.
 
 | 콘솔 | 환경 | 역할 |
