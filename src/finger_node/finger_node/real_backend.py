@@ -252,7 +252,8 @@ def main():
     except (KeyboardInterrupt, ExternalShutdownException):
         pass
     except RuntimeError as exc:
-        print(f'hand_serial failed: {exc}')
+        if rclpy.ok():  # otherwise Humble's take_message raced with Ctrl+C
+            print(f'hand_serial failed: {exc}')
     finally:
         signal.signal(signal.SIGINT, signal.SIG_IGN)  # ros2 launch forwards a second Ctrl+C
         try:

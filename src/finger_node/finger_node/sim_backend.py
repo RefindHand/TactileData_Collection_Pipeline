@@ -183,6 +183,9 @@ def main():
             viewer.close()
     except (KeyboardInterrupt, ExternalShutdownException):
         pass
+    except RuntimeError:
+        if rclpy.ok():
+            raise  # a real error; otherwise Humble's take_message raced with Ctrl+C
     finally:
         signal.signal(signal.SIGINT, signal.SIG_IGN)  # ros2 launch forwards a second Ctrl+C
         try:
