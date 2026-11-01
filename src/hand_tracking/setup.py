@@ -9,7 +9,7 @@ setup(
     data_files=[
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
-        ('share/' + package_name, ['package.xml']),
+        ('share/' + package_name, ['package.xml', 'README.md']),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -24,7 +24,9 @@ setup(
     },
     entry_points={
         'console_scripts': [
-		'hand_tracking_node = hand_tracking.hand_tracking_node:main',
+            'hand_tracking_node = hand_tracking.hand_tracking_node:main',
+            # Run windows_sender/Py_webCamReader.py on Ubuntu (desktop, AGX Orin)
+            'linux_webcam_sender = hand_tracking.linux_webcam_sender:main',
         ],
     },
 )
