@@ -19,7 +19,7 @@
 | 역할 | 패키지 | 안내서 |
 | --- | --- | --- |
 | 웹캠 노드 (손 인식) | `src/hand_tracking` + `windows_sender/` | [README](src/hand_tracking/README.md) |
-| 손가락 노드 ×6 (액추에이터별 각도·힘) | `src/finger_node` | 추가 예정 |
+| 손가락 노드 ×6 (액추에이터별 각도·힘) | `src/finger_node` | [README](src/finger_node/README.md) |
 | 자세 명령 노드 | `src/pose_command` | [README](src/pose_command/README.md) |
 | 피드백 노드 (각도·힘·촉각 피드백) | `src/feedback_node` | [README](src/feedback_node/README.md) |
 | 로봇 핸드 카메라 노드 | 미정 | 작업 중 |
@@ -37,6 +37,7 @@
 TactileData_Collection_Pipeline/
 ├── src/                       # ROS2 패키지 (모든 패키지는 여기에 둔다)
 │   ├── hand_tracking/         #   웹캠 손 인식 UDP 수신 노드
+│   ├── finger_node/           #   손가락 노드 (액추에이터별 각도·힘)
 │   ├── pose_command/          #   자세 명령 노드
 │   └── feedback_node/         #   피드백 노드
 ├── windows_sender/            # Windows 웹캠 손 인식 프로그램 (ROS 패키지 아님)
