@@ -27,9 +27,15 @@ MediaPipe에서 추출한 21개 손 관절 좌표를 입력받아 손가락의 �
 
 **Output**
 
+- Topic: `/finger/<finger>/command` (`index`, `middle`, `ring`, `little`, `thumb_root`, `thumb`)
+- Type: `std_msgs/msg/Float64`
+- Data: 손가락 노드로 보내는 목표 각도 (rad). 0.0~1.0 목표값을 손가락별 범위(`finger_node.common.FINGER_LIMITS`, 예: 검지 0~1.45 rad)로 변환한 값
+
+**Output (기존 시뮬레이터 호환)**
+
 - Topic: `/rohand_sim/target`
 - Type: `std_msgs/msg/Float64MultiArray`
-- Data: 6개 액추에이터 목표값 (각각 0.0~1.0)
+- Data: 6개 액추에이터 목표값 (각각 0.0~1.0, 0.0 = 펴짐). `hardware_connection_test/rohand_sim_ros2.py`용
 
 출력 배열 순서:
 
@@ -58,21 +64,23 @@ MediaPipe에서 추출한 21개 손 관절 좌표를 입력받아 손가락의 �
 
 ROS 2 Humble이 설치되어 있어야 합니다.
 
+손가락 범위를 `finger_node` 패키지에서 가져오므로 함께 빌드합니다.
+
 ```bash
-cd ~/robot_hand_ws
+cd ~/TactileData_Collection_Pipeline
 source /opt/ros/humble/setup.bash
-colcon build --symlink-install --packages-select pose_command
+colcon build --symlink-install --packages-select finger_node pose_command
 source install/setup.bash
 ```
 
 ## 6. Run
 
 ```bash
-source ~/robot_hand_ws/install/setup.bash
+source ~/TactileData_Collection_Pipeline/install/setup.bash
 ros2 run pose_command pose_command_node
 ```
 
-입력 토픽 `/hand_landmarks`를 발행하는 프로그램과 출력 토픽 `/rohand_sim/target`을 구독하는 MuJoCo 시뮬레이터가 별도로 실행되어 있어야 합니다.
+입력 토픽 `/hand_landmarks`를 발행하는 웹캠 노드(`hand_tracking_node`)와, 출력을 받는 손가락 노드(`ros2 launch finger_node fingers.launch.py`)가 별도로 실행되어 있어야 합니다. 기존 MuJoCo 시뮬레이터(`hardware_connection_test/rohand_sim_ros2.py`)는 `/rohand_sim/target`으로 계속 사용할 수 있습니다.
 
 ## 7. Configuration
 
@@ -97,8 +105,8 @@ ros2 run pose_command pose_command_node
 
 ## 9. Integration Notes
 
-현재 테스트 환경에서는 Windows MediaPipe 프로그램이 UDP로 관절 좌표를 전송하고, WSL2의 별도 브리지 프로그램이 이를 `/hand_landmarks`로 발행합니다.
+전체 흐름: 웹캠(`windows_sender/Py_webCamReader.py` → UDP → `hand_tracking_node`) → `/hand_landmarks` → **pose_command_node** → `/finger/<finger>/command` → 손가락 노드 ×6 → 로봇 핸드
 
-팀의 최종 카메라 노드가 동일한 토픽 이름, 메시지 타입, 데이터 순서로 관절 좌표를 발행한다면 테스트용 Windows/UDP 브리지 없이 연결할 수 있습니다.
+웹캠 노드는 MediaPipe world landmark를 매 프레임 `/hand_landmarks`로 발행합니다 (보정 불필요).
 
 ROS 2 패키지 자체는 웹캠 영상 처리 및 UDP 통신 기능을 포함하지 않습니다.

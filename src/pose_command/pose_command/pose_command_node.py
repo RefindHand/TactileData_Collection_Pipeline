@@ -5,7 +5,9 @@ import time
 import rclpy
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
-from std_msgs.msg import Float32MultiArray, Float64MultiArray
+from std_msgs.msg import Float32MultiArray, Float64, Float64MultiArray
+
+from finger_node.common import FINGER_LIMITS, FINGERS, finger_command_topic
 
 
 THUMB_OPEN_DISTANCE = 1.8
@@ -99,11 +101,24 @@ class PoseCommandNode(Node):
             10
         )
 
+        # 0~1 targets for hardware_connection_test/rohand_sim_ros2.py
         self.publisher = self.create_publisher(
             Float64MultiArray,
             '/rohand_sim/target',
             10
         )
+
+        # Finger nodes: one Float64 (rad) per actuator.
+        # targets order == FINGERS order:
+        # [index, middle, ring, little, thumb_root, thumb]
+        self.finger_publishers = [
+            self.create_publisher(
+                Float64,
+                finger_command_topic(finger),
+                10
+            )
+            for finger in FINGERS
+        ]
 
         self.finger_joints = {
             'Index': (5, 6, 7),
@@ -139,6 +154,15 @@ class PoseCommandNode(Node):
         msg = Float64MultiArray()
         msg.data = [float(value) for value in targets]
         self.publisher.publish(msg)
+
+        # 0~1 (0 = open) -> joint angle in rad within each finger's range
+        for finger, value, publisher in zip(
+            FINGERS, targets, self.finger_publishers
+        ):
+            low, high = FINGER_LIMITS[finger]
+            publisher.publish(
+                Float64(data=low + clamp(value) * (high - low))
+            )
 
     def watchdog_callback(self):
         now = time.monotonic()
@@ -286,6 +310,9 @@ def main(args=None):
         rclpy.spin(node)
     except (KeyboardInterrupt, ExternalShutdownException):
         pass
+    except RuntimeError:
+        if rclpy.ok():
+            raise  # a real error; otherwise Humble's take_message raced with Ctrl+C
     finally:
         node.destroy_node()
         # Ctrl+C under ros2 launch may already have shut the context down
