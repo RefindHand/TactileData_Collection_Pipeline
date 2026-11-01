@@ -1,21 +1,35 @@
-
 import math
 import time
 
 import rclpy
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
-from std_msgs.msg import Float32MultiArray, Float64, Float64MultiArray
+from std_msgs.msg import Empty, Float32MultiArray, Float64, Float64MultiArray
 
 from finger_node.common import FINGER_LIMITS, FINGERS, finger_command_topic
 
 
-THUMB_OPEN_DISTANCE = 1.8
-THUMB_CLOSED_DISTANCE = 0.85
-REVERSE_THUMB_ROOT = False
+# Thumb rotation angle grows opposite to the robot's thumb_root
+# (checked with the webcam), so the normalized value is flipped.
+REVERSE_THUMB_ROOT = True
 
 INPUT_TIMEOUT = 0.5
-FILTER_ALPHA = 0.25
+# EMA on measured joint angles (same value as windows_sender/Py_webCamReader.py)
+FILTER_ALPHA = 0.7
+
+# Auto calibration: each channel maps its observed [min, max] angle to 0~1
+# (0 = open). The range starts from these defaults (deg) and only widens,
+# so opening and closing the hand once calibrates it.
+# Order == FINGERS: [index, middle, ring, little, thumb_root, thumb]
+DEFAULT_RANGES = [
+    (15.0, 60.0),
+    (15.0, 60.0),
+    (15.0, 60.0),
+    (15.0, 60.0),
+    None,           # thumb rotation: no sensible default, learned only
+    (10.0, 40.0),
+]
+MIN_RANGE = 10.0    # deg; narrower ranges output 0 (open)
 
 SAFE_TARGETS = [0.0] * 6
 
@@ -24,69 +38,171 @@ def clamp(value, low=0.0, high=1.0):
     return max(low, min(high, value))
 
 
-def calculate_distance(p1, p2):
-    return math.sqrt(
-        sum((p1[i] - p2[i]) ** 2 for i in range(3))
-    )
+def subtract(a, b):
+    return [a[i] - b[i] for i in range(3)]
+
+
+def dot(a, b):
+    return sum(a[i] * b[i] for i in range(3))
+
+
+def cross(a, b):
+    return [
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+    ]
+
+
+def normalize_vector(v):
+    norm = math.sqrt(dot(v, v))
+
+    if norm < 1e-8:
+        return None
+
+    return [c / norm for c in v]
 
 
 def calculate_joint_angle(p1, p2, p3):
-    v1 = [p1[i] - p2[i] for i in range(3)]
-    v2 = [p3[i] - p2[i] for i in range(3)]
+    v1 = subtract(p1, p2)
+    v2 = subtract(p3, p2)
 
-    dot = sum(v1[i] * v2[i] for i in range(3))
-    norm1 = math.sqrt(sum(v * v for v in v1))
-    norm2 = math.sqrt(sum(v * v for v in v2))
+    norm1 = math.sqrt(dot(v1, v1))
+    norm2 = math.sqrt(dot(v2, v2))
 
     if norm1 < 1e-8 or norm2 < 1e-8:
         return None
 
     cosine = clamp(
-        dot / (norm1 * norm2), -1.0, 1.0
+        dot(v1, v2) / (norm1 * norm2), -1.0, 1.0
     )
 
     return math.degrees(math.acos(cosine))
 
 
-def normalize_flexion(angle):
-    flexion = 180.0 - angle
-    target = clamp(flexion / 90.0)
-    return flexion, target
+# Measurements below follow windows_sender/Py_webCamReader.py (person 1).
 
+def finger_bend_angle(landmarks, base):
+    """Weighted MCP / PIP / DIP flexion (deg) of index..little."""
 
-def calculate_thumb_root(landmarks):
-    thumb_tip = landmarks[4]
-    index_mcp = landmarks[5]
-    pinky_mcp = landmarks[17]
-
-    palm_width = calculate_distance(
-        index_mcp, pinky_mcp
+    mcp = calculate_joint_angle(
+        landmarks[0], landmarks[base], landmarks[base + 1]
+    )
+    pip = calculate_joint_angle(
+        landmarks[base], landmarks[base + 1], landmarks[base + 2]
+    )
+    dip = calculate_joint_angle(
+        landmarks[base + 1], landmarks[base + 2], landmarks[base + 3]
     )
 
-    if palm_width < 1e-8:
+    if mcp is None or pip is None or dip is None:
         return None
 
-    thumb_distance = calculate_distance(
-        thumb_tip, pinky_mcp
+    return (
+        0.35 * (180.0 - mcp)
+        + 0.45 * (180.0 - pip)
+        + 0.20 * (180.0 - dip)
     )
 
-    ratio = thumb_distance / palm_width
 
-    denominator = (
-        THUMB_OPEN_DISTANCE - THUMB_CLOSED_DISTANCE
-    )
+def thumb_bend_angle(landmarks):
+    """Mean MCP / IP flexion (deg) of the thumb."""
 
-    if denominator <= 0:
+    mcp = calculate_joint_angle(landmarks[1], landmarks[2], landmarks[3])
+    ip = calculate_joint_angle(landmarks[2], landmarks[3], landmarks[4])
+
+    if mcp is None or ip is None:
         return None
 
-    target = clamp(
-        (THUMB_OPEN_DISTANCE - ratio) / denominator
+    return 0.5 * (180.0 - mcp) + 0.5 * (180.0 - ip)
+
+
+def palm_axes(landmarks):
+    """x: pinky MCP -> index MCP, y: wrist -> palm centre, z: palm normal."""
+
+    wrist, index_mcp, pinky_mcp = landmarks[0], landmarks[5], landmarks[17]
+
+    x_axis = normalize_vector(subtract(index_mcp, pinky_mcp))
+
+    if x_axis is None:
+        return None
+
+    palm_center = [(index_mcp[i] + pinky_mcp[i]) / 2.0 for i in range(3)]
+    y_temp = subtract(palm_center, wrist)
+    along_x = dot(y_temp, x_axis)
+    y_axis = normalize_vector(
+        [y_temp[i] - along_x * x_axis[i] for i in range(3)]
     )
 
-    if REVERSE_THUMB_ROOT:
-        target = 1.0 - target
+    if y_axis is None:
+        return None
 
-    return ratio, target
+    z_axis = normalize_vector(cross(x_axis, y_axis))
+
+    if z_axis is None:
+        return None
+
+    return x_axis, y_axis, z_axis
+
+
+def thumb_rotation_angle(landmarks):
+    """Angle (deg) of the thumb CMC -> MCP direction in the palm plane."""
+
+    axes = palm_axes(landmarks)
+
+    if axes is None:
+        return None
+
+    x_axis, y_axis, z_axis = axes
+    thumb = subtract(landmarks[2], landmarks[1])
+    along_z = dot(thumb, z_axis)
+    projected = normalize_vector(
+        [thumb[i] - along_z * z_axis[i] for i in range(3)]
+    )
+
+    if projected is None:
+        return None
+
+    return math.degrees(
+        math.atan2(dot(projected, x_axis), dot(projected, y_axis))
+    )
+
+
+def measure_hand(landmarks):
+    """Joint angles (deg) in FINGERS order; None where geometry is invalid."""
+
+    return [
+        finger_bend_angle(landmarks, 5),
+        finger_bend_angle(landmarks, 9),
+        finger_bend_angle(landmarks, 13),
+        finger_bend_angle(landmarks, 17),
+        thumb_rotation_angle(landmarks),
+        thumb_bend_angle(landmarks),
+    ]
+
+
+class AutoRange:
+    """Observed [min, max] of one channel, widened by every new value."""
+
+    def __init__(self, default):
+        self.default = default
+        self.reset()
+
+    def reset(self):
+        if self.default is None:
+            self.low, self.high = math.inf, -math.inf
+        else:
+            self.low, self.high = self.default
+
+    def update(self, value):
+        self.low = min(self.low, value)
+        self.high = max(self.high, value)
+
+    def normalize(self, value):
+        if self.high - self.low < MIN_RANGE:
+            return 0.0
+
+        return clamp((value - self.low) / (self.high - self.low))
 
 
 class PoseCommandNode(Node):
@@ -120,15 +236,17 @@ class PoseCommandNode(Node):
             for finger in FINGERS
         ]
 
-        self.finger_joints = {
-            'Index': (5, 6, 7),
-            'Middle': (9, 10, 11),
-            'Ring': (13, 14, 15),
-            'Pinky': (17, 18, 19)
-        }
+        self.create_subscription(
+            Empty,
+            '/pose_command/reset_calibration',
+            self.reset_calibration,
+            10
+        )
+
+        self.ranges = [AutoRange(default) for default in DEFAULT_RANGES]
 
         self.last_valid_input = None
-        self.filtered_targets = None
+        self.filtered_angles = None
         self.timed_out = False
         self.frame_count = 0
 
@@ -149,6 +267,16 @@ class PoseCommandNode(Node):
         self.get_logger().info(
             f'Filter alpha: {FILTER_ALPHA}'
         )
+        self.get_logger().info(
+            'Auto calibration: open and close the hand fully once '
+            '(reset: /pose_command/reset_calibration)'
+        )
+
+    def reset_calibration(self, _msg):
+        for auto_range in self.ranges:
+            auto_range.reset()
+
+        self.get_logger().info('Calibration reset')
 
     def publish_targets(self, targets):
         msg = Float64MultiArray()
@@ -178,7 +306,7 @@ class PoseCommandNode(Node):
         if elapsed >= INPUT_TIMEOUT:
             if not self.timed_out:
                 self.timed_out = True
-                self.filtered_targets = None
+                self.filtered_angles = None
 
                 self.get_logger().warn(
                     'HAND INPUT TIMEOUT - default pose'
@@ -204,60 +332,14 @@ class PoseCommandNode(Node):
             for i in range(21)
         ]
 
-        targets = []
+        angles = measure_hand(landmarks)
 
-        for finger, joints in self.finger_joints.items():
-            mcp, pip, dip = joints
-
-            angle = calculate_joint_angle(
-                landmarks[mcp],
-                landmarks[pip],
-                landmarks[dip]
-            )
-
+        for finger, angle in zip(FINGERS, angles):
             if angle is None:
                 self.get_logger().warn(
                     f'Invalid {finger} geometry'
                 )
                 return
-
-            _, target = normalize_flexion(angle)
-            targets.append(target)
-
-        thumb_root_result = calculate_thumb_root(
-            landmarks
-        )
-
-        if thumb_root_result is None:
-            self.get_logger().warn(
-                'Invalid thumb root geometry'
-            )
-            return
-
-        thumb_ratio, thumb_root_target = (
-            thumb_root_result
-        )
-
-        thumb_angle = calculate_joint_angle(
-            landmarks[2],
-            landmarks[3],
-            landmarks[4]
-        )
-
-        if thumb_angle is None:
-            self.get_logger().warn(
-                'Invalid thumb flexion geometry'
-            )
-            return
-
-        _, thumb_flex_target = normalize_flexion(
-            thumb_angle
-        )
-
-        targets.extend([
-            thumb_root_target,
-            thumb_flex_target
-        ])
 
         now = time.monotonic()
 
@@ -274,31 +356,43 @@ class PoseCommandNode(Node):
             )
 
         # First valid frame starts from the measured pose.
-        if self.filtered_targets is None:
-            self.filtered_targets = list(targets)
+        if self.filtered_angles is None:
+            self.filtered_angles = list(angles)
         else:
-            self.filtered_targets = [
-                clamp(
-                    FILTER_ALPHA * current
-                    + (1.0 - FILTER_ALPHA) * previous
-                )
+            self.filtered_angles = [
+                FILTER_ALPHA * current
+                + (1.0 - FILTER_ALPHA) * previous
                 for current, previous in zip(
-                    targets, self.filtered_targets
+                    angles, self.filtered_angles
                 )
             ]
 
-        self.publish_targets(self.filtered_targets)
+        targets = []
+
+        for k, angle in enumerate(self.filtered_angles):
+            self.ranges[k].update(angle)
+            targets.append(self.ranges[k].normalize(angle))
+
+        thumb_root = FINGERS.index('thumb_root')
+
+        if REVERSE_THUMB_ROOT and self.ranges[thumb_root].high - \
+                self.ranges[thumb_root].low >= MIN_RANGE:
+            targets[thumb_root] = 1.0 - targets[thumb_root]
+
+        self.publish_targets(targets)
 
         self.frame_count += 1
 
         if self.frame_count % 20 == 0:
             self.get_logger().info(
                 'Targets: '
+                + str([round(v, 3) for v in targets])
+                + ' | ranges(deg): '
                 + str([
-                    round(v, 3)
-                    for v in self.filtered_targets
+                    (round(r.low), round(r.high))
+                    if r.high >= r.low else None
+                    for r in self.ranges
                 ])
-                + f' | thumb_ratio={thumb_ratio:.3f}'
             )
 
 
