@@ -9,7 +9,8 @@ Parameter finger: index | middle | ring | little | thumb_root | thumb
   pub  /finger/<finger>/angle_force    std_msgs/Float64MultiArray  [angle_deg, force_N, target_deg]
   pub  /finger/<finger>/tactile        std_msgs/Float32MultiArray  fingertip tactile (not for thumb_root)
 
-Hardware side (hand_sim or hand_serial backend, which owns MuJoCo / the serial port):
+Hardware side (hand_sim or hand_serial in this package; one backend owns MuJoCo / the serial port,
+so the six finger nodes never open it themselves):
   pub  /hand_hw/<finger>/target        std_msgs/Float64            clamped target angle (rad)
   sub  /hand_hw/state                  sensor_msgs/JointState      all 6 actuators
   sub  /hand_hw/tactile/<finger>       std_msgs/Float32MultiArray
@@ -17,6 +18,7 @@ Hardware side (hand_sim or hand_serial backend, which owns MuJoCo / the serial p
 If the backend gives no velocity (real hand), it is estimated from consecutive angles.
 """
 import math
+import signal
 
 import rclpy
 from rclpy.executors import ExternalShutdownException
@@ -24,19 +26,12 @@ from rclpy.node import Node
 from sensor_msgs.msg import JointState
 from std_msgs.msg import Float32MultiArray, Float64, Float64MultiArray
 
-# Same order as the keyboard tools: 1 index, 2 middle, 3 ring, 4 little, 5 thumb_root, 6 thumb
-FINGERS = ('index', 'middle', 'ring', 'little', 'thumb_root', 'thumb')
-# Fingers with a fingertip tactile pad (thumb_root has none)
-TACTILE_FINGERS = ('thumb', 'index', 'middle', 'ring', 'little')
-# Command limits in rad (MuJoCo AP002 actuator ctrlrange); 0 = open
-FINGER_LIMITS = {
-    'index': (0.0, 1.45),
-    'middle': (0.0, 1.5),
-    'ring': (0.0, 1.44),
-    'little': (0.0, 1.44),
-    'thumb_root': (0.0, 1.57),
-    'thumb': (0.0, 1.327),
-}
+from finger_node.common import (
+    FINGER_LIMITS, FINGERS, HW_STATE_TOPIC, TACTILE_REGIONS, finger_angle_force_topic,
+    finger_command_topic, finger_state_topic, finger_tactile_topic, hw_tactile_topic,
+    hw_target_topic,
+)
+
 NAN = float('nan')
 
 
@@ -59,22 +54,22 @@ class FingerNode(Node):
         self.lo = float(p('min_angle', lo).value)
         self.hi = float(p('max_angle', hi).value)
         log_period = float(p('log_period', 1.0).value)  # 0 = no periodic log
-        hw_state_topic = p('hw_state_topic', '/hand_hw/state').value
+        hw_state_topic = p('hw_state_topic', HW_STATE_TOPIC).value
         f = self.finger
 
         self.target = NAN
         self.last = None  # (time_s, angle_rad) for velocity estimate
         self.latest = (NAN, NAN, NAN)  # angle rad, velocity rad/s, force N
 
-        self.pub_target = self.create_publisher(Float64, f'/hand_hw/{f}/target', 10)
-        self.pub_state = self.create_publisher(JointState, f'/finger/{f}/state', 10)
+        self.pub_target = self.create_publisher(Float64, hw_target_topic(f), 10)
+        self.pub_state = self.create_publisher(JointState, finger_state_topic(f), 10)
         self.pub_angle_force = self.create_publisher(
-            Float64MultiArray, f'/finger/{f}/angle_force', 10)
-        self.create_subscription(Float64, f'/finger/{f}/command', self.on_command, 10)
+            Float64MultiArray, finger_angle_force_topic(f), 10)
+        self.create_subscription(Float64, finger_command_topic(f), self.on_command, 10)
         self.create_subscription(JointState, hw_state_topic, self.on_hw_state, 10)
-        if f in TACTILE_FINGERS:
-            self.pub_tactile = self.create_publisher(Float32MultiArray, f'/finger/{f}/tactile', 10)
-            self.create_subscription(Float32MultiArray, f'/hand_hw/tactile/{f}',
+        if f in TACTILE_REGIONS:  # thumb_root has no tactile pad
+            self.pub_tactile = self.create_publisher(Float32MultiArray, finger_tactile_topic(f), 10)
+            self.create_subscription(Float32MultiArray, hw_tactile_topic(f),
                                      self.pub_tactile.publish, 10)
         if log_period > 0:
             self.create_timer(log_period, self.log_status)
@@ -127,6 +122,7 @@ def main():
     except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
+        signal.signal(signal.SIGINT, signal.SIG_IGN)  # ros2 launch forwards a second Ctrl+C
         try:
             if node is not None:
                 node.destroy_node()
