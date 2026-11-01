@@ -1,0 +1,40 @@
+<!--
+  Orbbec Gemini 305 (CAD_V1.1) + virtual passive-stereo RGB-D cameras.
+
+  Body "gemini305" frame = Orbbec depth coordinate system (datasheet 4.9):
+    origin at the optical center of the LEFT RGB module (= depth and color origin),
+    +X right, +Y down, +Z forward (out of the glass). The depth zero point is 3.95 mm
+    behind the front cover glass.
+  Moving / rotating this body moves the housing mesh and all virtual cameras together.
+
+  MuJoCo cameras look along their own -Z with +Y up, so quat="0 1 0 0" (180 deg about X)
+  turns the optical frame into a MuJoCo camera frame.
+
+  Intrinsics (datasheet 4.7.2, 848x530: fx = fy = 410.7, principal point at image center):
+    stereo  fovy = 2*atan(400/620) = 65.657 deg  -> H 91.8 x V 65.7 deg (IR/depth)
+    rgb     fovy = 68 deg                         -> H 94 x V 68 deg (color FOV)
+  The RGB stream of the real device comes from the left module, so "rgb" sits at the origin.
+  Baseline 18 mm: "stereo_right" is +18 mm along +X.
+-->
+<mujoco model="gemini305">
+  <compiler angle="degree"/>
+
+  <asset>
+    <!-- CAD frame in mm (converted by convert_cad.py); the geom below maps it to the optical frame -->
+    <mesh name="gemini305_housing" file="meshes/gemini305_housing.stl" scale="0.001 0.001 0.001"/>
+    <material name="gemini305_housing" rgba="0.32 0.33 0.35 1" specular="0.6" shininess="0.6"/>
+  </asset>
+
+  <worldbody>
+    <!-- default placement in the AP002 world: 20 cm in front of the palm, fingertips toward image top -->
+    <body name="gemini305" pos="-0.10 -0.02 -0.20" quat="0.70710678 0 0 -0.70710678">
+      <!-- group 3: hidden from the virtual cameras (they sit behind the front glass) -->
+      <geom name="gemini305_housing" type="mesh" mesh="gemini305_housing" material="gemini305_housing"
+            pos="0.02735 -0.01718 0.00395" quat="0 0 -0.70710678 0.70710678"
+            group="3" contype="0" conaffinity="0" mass="0.1"/>
+      <camera name="rgb" pos="0 0 0" quat="0 1 0 0" fovy="68"/>
+      <camera name="stereo_left" pos="0 0 0" quat="0 1 0 0" fovy="65.657"/>
+      <camera name="stereo_right" pos="0.018 0 0" quat="0 1 0 0" fovy="65.657"/>
+    </body>
+  </worldbody>
+</mujoco>
