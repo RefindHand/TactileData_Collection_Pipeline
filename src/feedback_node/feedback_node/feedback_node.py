@@ -202,6 +202,9 @@ def main():
         rclpy.spin(node)
     except (KeyboardInterrupt, ExternalShutdownException):
         pass
+    except RuntimeError:
+        if rclpy.ok():
+            raise  # a real error; otherwise Humble's take_message raced with Ctrl+C
     finally:
         try:
             if node is not None:
