@@ -1,6 +1,6 @@
 # Hand Tracking → ROS 2 데이터 전송
 
-Windows 웹캠에서 MediaPipe로 손가락 움직임을 측정하고, UDP를 통해 WSL(Ubuntu)의 ROS 2 토픽으로 전송하는 프로그램입니다.
+Windows 웹캠에서 MediaPipe로 손 관절 좌표를 측정하고, UDP를 통해 WSL(Ubuntu)의 ROS 2 토픽으로 전송하는 프로그램입니다. 관절 좌표는 자세 명령 노드(`pose_command`)가 받아 로봇 손가락 각도로 바꿉니다.
 
 ## 1. 실행 구조
 
@@ -8,8 +8,16 @@ Windows 웹캠에서 MediaPipe로 손가락 움직임을 측정하고, UDP를 �
 Windows 웹캠 → Py_webCamReader.py (MediaPipe)
              → UDP / 5005
              → WSL hand_tracking_node (ROS 2 Humble)
-             → /hand/finger_angles (Float32MultiArray)
+             → /hand_landmarks      (Float32MultiArray, 관절 21개 × xyz)  → pose_command_node
+             → /hand/finger_angles  (Float32MultiArray, 보정된 손가락 값 6개, 확인·기록용)
 ```
+
+| 토픽 | 내용 | 전송 조건 |
+|---|---|---|
+| `/hand_landmarks` | MediaPipe world landmark 21개 × (x, y, z) = 63개 (m). 순서는 MediaPipe 기준 0~20번 | 손이 인식되면 **매 프레임** (보정 불필요) |
+| `/hand/finger_angles` | 보정된 손가락 값 6개 (0~1) | 6개 손가락 모두 보정 범위가 생긴 뒤 |
+
+UDP 메시지 형식 (JSON): `{"landmarks": [63개], "values": [6개]}`. `values`는 보정 전에는 없습니다.
 
 **총 3개의 콘솔**을 사용합니다. 콘솔 ①과 ③은 **WSL Ubuntu**, 콘솔 ②는 **Windows PowerShell**입니다.
 
@@ -78,7 +86,7 @@ ros2 run hand_tracking hand_tracking_node
 
 ```text
 UDP receiver started: 0.0.0.0:5005
-Publishing topic: /hand/finger_angles
+Publishing topics: /hand_landmarks, /hand/finger_angles
 ```
 
 **이 터미널을 종료하지 마세요.** 같은 노드를 중복 실행하면 UDP 포트 충돌(`Address already in use`)이 발생할 수 있습니다.
@@ -126,7 +134,7 @@ source ~/TactileData_Collection_Pipeline/install/setup.bash
 ros2 topic echo /hand/finger_angles
 ```
 
-손가락을 움직일 때 다음과 같이 **6개 값이 계속 변경되면 정상 작동**입니다.
+손이 인식되면 `ros2 topic hz /hand_landmarks`가 웹캠 프레임 속도(약 30 Hz)로 나와야 합니다. 보정 후에는 손가락을 움직일 때 다음과 같이 **6개 값이 계속 변경되면 정상 작동**입니다.
 
 ```yaml
 data:
@@ -141,7 +149,7 @@ data:
 
 토픽 타입은 `std_msgs/msg/Float32MultiArray`이고, 값은 `0.0~1.0` 범위로 정규화됩니다.
 
-> **방향 주의:** 6개 값 모두 로봇 핸드와 방향이 반대입니다. 연결할 때 `1 - 값`으로 뒤집어야 합니다.
+> **방향 주의:** 이 값은 확인·기록용이며 로봇 핸드 제어에는 쓰지 않습니다 (제어는 `/hand_landmarks` → `pose_command`). 6개 값 모두 로봇 핸드와 방향이 반대이므로, 다른 곳에 쓸 때는 `1 - 값`으로 뒤집어야 합니다.
 > - 굽힘 5개(순서 0~4): **1.0 = 펴짐, 0.0 = 굽힘** (`Py_webCamReader.py`의 `fg_bend = 1.0 - normalized`). 로봇 핸드(MuJoCo·실물)와 자세 명령 노드는 **0 = 펴짐, 1 = 굽힘**입니다.
 > - 엄지 회전(순서 5): 웹캠 테스트에서 로봇 핸드의 엄지 뿌리 회전과 반대 방향으로 확인되었습니다.
 
@@ -167,18 +175,19 @@ data:
 | `No module named 'network_config'` | `windows_sender/network_config.py` 파일명과 위치 확인 (`.py` 확장자 필수) |
 | `mediapipe has no attribute 'solutions'` | Windows Python 버전 및 MediaPipe 호환 버전 확인. Python 3.11 + MediaPipe 0.10.21 구성 권장 |
 | `Address already in use` | WSL에서 `sudo ss -lunp \| grep ':5005'`로 포트 점유 프로세스 확인 후 중복 노드 종료 |
-| `/hand/finger_angles`가 목록에 없음 | 콘솔 ①의 노드 실행 여부 및 각 터미널의 ROS 2 환경 `source` 여부 확인 |
-| 토픽은 있지만 데이터가 없음 | Windows 웹캠에서 손이 인식되는지, 6개 값이 유효한지, Windows가 올바른 WSL IP/UDP 5005로 보내는지 확인 |
+| `/hand_landmarks`, `/hand/finger_angles`가 목록에 없음 | 콘솔 ①의 노드 실행 여부 및 각 터미널의 ROS 2 환경 `source` 여부 확인 |
+| `/hand_landmarks`는 나오는데 `/hand/finger_angles`가 없음 | 아직 보정 전. 손가락을 끝까지 쥐었다 폈다 하고 엄지를 돌려 6개 모두 보정 |
+| 토픽은 있지만 데이터가 없음 | Windows 웹캠에서 손이 인식되는지, Windows가 올바른 WSL IP/UDP 5005로 보내는지 확인 |
 
 ### ROS 2 수신 경로만 테스트하기
 
 콘솔 ①과 ③이 실행 중인 상태에서 **추가 WSL 터미널**에 아래 명령을 입력합니다.
 
 ```bash
-python3 -c 'import socket,json; s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM); s.sendto(json.dumps({"values":[0.1,0.2,0.3,0.4,0.5,0.6]}).encode(),("127.0.0.1",5005)); s.close()'
+python3 -c 'import socket,json; s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM); s.sendto(json.dumps({"landmarks":[0.0]*63,"values":[0.1,0.2,0.3,0.4,0.5,0.6]}).encode(),("127.0.0.1",5005)); s.close()'
 ```
 
-콘솔 ③에 `0.1`부터 `0.6`까지 출력된다면 **WSL UDP 수신 및 ROS 2 토픽 발행은 정상**입니다. 실제 웹캠 값이 안 나온다면 Windows 송신 프로그램과 네트워크 설정을 점검합니다.
+콘솔 ③에 `0.1`부터 `0.6`까지 출력되고 `ros2 topic echo --once /hand_landmarks`에 0이 63개 나온다면 **WSL UDP 수신 및 ROS 2 토픽 발행은 정상**입니다. 실제 웹캠 값이 안 나온다면 Windows 송신 프로그램과 네트워크 설정을 점검합니다.
 
 ---
 

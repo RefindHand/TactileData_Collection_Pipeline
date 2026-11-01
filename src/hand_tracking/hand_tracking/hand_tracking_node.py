@@ -11,8 +11,32 @@ from std_msgs.msg import Float32MultiArray
 
 UDP_HOST = "0.0.0.0"
 UDP_PORT = 5005
+
+# MediaPipe world landmarks 21 x (x, y, z) -> pose_command_node
+LANDMARKS_TOPIC = "/hand_landmarks"
+LANDMARK_COUNT = 21 * 3
+
+# Calibrated finger values 0~1 (monitoring / recording only)
+# [thumb, index, middle, ring, pinky, thumb_rotation], 1.0 = open
 TOPIC_NAME = "/hand/finger_angles"
 FG_COUNT = 6
+
+
+def parse_floats(values, count, low=None, high=None):
+    """Return a float list of the given length, or None if invalid."""
+
+    if not isinstance(values, list) or len(values) != count:
+        return None
+
+    values = [float(v) for v in values]
+
+    if not all(math.isfinite(v) for v in values):
+        return None
+
+    if low is not None and not all(low <= v <= high for v in values):
+        return None
+
+    return values
 
 
 class HandTrackingNode(Node):
@@ -20,7 +44,13 @@ class HandTrackingNode(Node):
     def __init__(self):
         super().__init__("hand_tracking_node")
 
-        # ROS 2 Publisher
+        # ROS 2 Publishers
+        self.landmarks_publisher = self.create_publisher(
+            Float32MultiArray,
+            LANDMARKS_TOPIC,
+            10
+        )
+
         self.publisher = self.create_publisher(
             Float32MultiArray,
             TOPIC_NAME,
@@ -50,7 +80,7 @@ class HandTrackingNode(Node):
         )
 
         self.get_logger().info(
-            f"Publishing topic: {TOPIC_NAME}"
+            f"Publishing topics: {LANDMARKS_TOPIC}, {TOPIC_NAME}"
         )
 
     def receive_data(self):
@@ -58,7 +88,7 @@ class HandTrackingNode(Node):
         for _ in range(20):
 
             try:
-                data, _ = self.udp_socket.recvfrom(4096)
+                data, _ = self.udp_socket.recvfrom(65536)
 
             except BlockingIOError:
                 break
@@ -74,34 +104,34 @@ class HandTrackingNode(Node):
                     data.decode("utf-8")
                 )
 
-                values = payload["values"]
-
-                if not isinstance(values, list):
+                if not isinstance(payload, dict):
                     continue
 
-                if len(values) != FG_COUNT:
-                    continue
+                landmarks = parse_floats(
+                    payload.get("landmarks"),
+                    LANDMARK_COUNT
+                )
 
-                values = [
-                    float(v)
-                    for v in values
-                ]
+                if landmarks is not None:
+                    self.landmarks_publisher.publish(
+                        Float32MultiArray(data=landmarks)
+                    )
 
-                if not all(
-                    math.isfinite(v) and 0.0 <= v <= 1.0
-                    for v in values
-                ):
-                    continue
+                values = parse_floats(
+                    payload.get("values"),
+                    FG_COUNT,
+                    0.0,
+                    1.0
+                )
 
-                msg = Float32MultiArray()
-                msg.data = values
-
-                self.publisher.publish(msg)
+                if values is not None:
+                    self.publisher.publish(
+                        Float32MultiArray(data=values)
+                    )
 
             except (
                 ValueError,
                 TypeError,
-                KeyError,
                 UnicodeDecodeError,
                 AttributeError
             ):
@@ -124,6 +154,10 @@ def main(args=None):
 
     except (KeyboardInterrupt, ExternalShutdownException):
         pass
+
+    except RuntimeError:
+        if rclpy.ok():
+            raise  # a real error; otherwise Humble's take_message raced with Ctrl+C
 
     finally:
         if node is not None:

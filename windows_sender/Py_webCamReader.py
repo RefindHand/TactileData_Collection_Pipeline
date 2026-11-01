@@ -424,8 +424,18 @@ def save_measurements(
 # ==========================================
 
 
-def send_hand_data(values: list[float]) -> None:
-    payload = {"values": values}
+def send_hand_data(
+    landmarks: list[float],
+    values: list[float] | None
+) -> None:
+    # landmarks: MediaPipe world landmarks 21 x (x, y, z) = 63 floats (m)
+    #            -> /hand_landmarks -> pose_command_node
+    # values: calibrated finger values (0~1), only after calibration
+    #         -> /hand/finger_angles (monitoring / recording)
+    payload = {"landmarks": landmarks}
+
+    if values is not None:
+        payload["values"] = values
 
     message = json.dumps(payload).encode("utf-8")
 
@@ -531,16 +541,25 @@ try:
                     else:
                         fg_bend[fg] = normalized
 
-            # 모든 측정값이 유효할 때만 전송
+            # 관절 좌표는 보정과 관계없이 매 프레임 전송하고,
+            # 손가락 값은 모든 측정값이 유효할 때만 함께 전송
             if all(fg_valid):
-
                 latest_hand_data = fg_bend.copy()
 
-                try:
-                    send_hand_data(latest_hand_data)
+            world_landmarks = [
+                float(value)
+                for lm in world_hand.landmark
+                for value in (lm.x, lm.y, lm.z)
+            ]
 
-                except OSError as error:
-                    print(f"UDP 전송 오류: {error}")
+            try:
+                send_hand_data(
+                    world_landmarks,
+                    latest_hand_data
+                )
+
+            except OSError as error:
+                print(f"UDP 전송 오류: {error}")
 
             mp_draw.draw_landmarks(
                 frame,
