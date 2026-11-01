@@ -1,181 +1,95 @@
-# Hand Tracking → ROS 2 데이터 전송
+# TactileData_Collection_Pipeline
 
-Windows 웹캠에서 MediaPipe로 손가락 움직임을 측정하고, UDP를 통해 WSL(Ubuntu)의 ROS 2 토픽으로 전송하는 프로그램입니다.
+로봇 핸드의 **관절 상태·촉각 데이터**와 카메라 영상을 수집하기 위한 ROS2 기반 프로젝트입니다.
 
-## 1. 실행 구조
+웹캠으로 사람 손 동작을 인식해 **OYMotion ROHand AP002**를 움직이고, 손가락별 각도·힘·촉각 피드백과 로봇 핸드 카메라 영상을 함께 수집합니다. MuJoCo 시뮬레이션과 실물 AP002 모두를 대상으로 합니다.
 
-```text
-Windows 웹캠 → Py_webCamReader.py (MediaPipe)
-             → UDP / 5005
-             → WSL hand_tracking_node (ROS 2 Humble)
-             → /hand/finger_angles (Float32MultiArray)
-```
+## 개발 환경
 
-**총 3개의 콘솔**을 사용합니다. 콘솔 ①과 ③은 **WSL Ubuntu**, 콘솔 ②는 **Windows PowerShell**입니다.
+- **OS:** Ubuntu 22.04 (데스크탑, Jetson AGX Orin) 또는 Windows + WSL2 Ubuntu 22.04
+- **ROS:** ROS2 Humble
+- **로봇 핸드:** OYMotion ROHand AP002 (오른손)
+- **통신:** USB-Serial(CH340), Modbus-RTU
+- **시뮬레이터:** MuJoCo
+- **손 인식:** MediaPipe Hands
+- **카메라(예정):** Orbbec Gemini 305
 
-| 콘솔 | 환경 | 역할 |
-|---|---|---|
-| ① | WSL Ubuntu | ROS 2 UDP 수신 노드 실행 |
-| ② | Windows PowerShell | 웹캠·손 추적 프로그램 실행 |
-| ③ | WSL Ubuntu | ROS 2 토픽 데이터 확인 |
+## 노드 구성
 
-## 2. 최초 1회 준비
-
-### WSL: ROS 2 패키지 빌드
-
-ROS 2 Humble과 `colcon`이 설치되어 있어야 합니다. 프로젝트가 아래 경로에 있다고 가정합니다.
-
-```bash
-~/ros2_ws/src/TactileData_Collection_Pipeline
-```
-
-WSL에서 다음을 실행합니다.
-
-```bash
-cd ~/ros2_ws
-source /opt/ros/humble/setup.bash
-colcon build --packages-select hand_tracking --symlink-install
-```
-
-> 빌드는 처음 설치하거나 ROS 2 패키지 코드를 수정했을 때만 다시 수행하면 됩니다.
-
-### Windows: Python 환경 준비
-
-Windows PowerShell에서 실행합니다. 아래는 기존에 작동 확인한 Python 3.11 환경 구성 예시입니다.
-
-```powershell
-conda create -n rohand_mp python=3.11 -y
-conda activate rohand_mp
-python -m pip install "mediapipe==0.10.21" "opencv-python" "numpy<2"
-```
-
-이미 작동하는 환경이 있다면 새로 만들지 않고 해당 환경을 활성화하면 됩니다. `Py_webCamReader.py`는 기존 `mp.solutions.hands` API를 사용하므로 호환되는 MediaPipe 버전이 필요합니다.
-
-`windows_sender` 폴더에 다음 파일이 있는지 확인합니다.
+| 역할 | 패키지 | 안내서 |
+| --- | --- | --- |
+| 웹캠 노드 (손 인식) | `src/hand_tracking` + `windows_sender/` | [README](src/hand_tracking/README.md) |
+| 손가락 노드 ×6 (액추에이터별 각도·힘) | `src/finger_node` | 추가 예정 |
+| 자세 명령 노드 | `src/pose_command` | [README](src/pose_command/README.md) |
+| 피드백 노드 (각도·힘·촉각 피드백) | `src/feedback_node` | [README](src/feedback_node/README.md) |
+| 로봇 핸드 카메라 노드 | 미정 | 작업 중 |
 
 ```text
-windows_sender/
-├── Py_webCamReader.py
-└── network_config.py
+웹캠 ──▶ 자세 명령 ──▶ 손가락 노드 ×6 ──▶ 로봇 핸드 (MuJoCo 또는 실물)
+                            │
+                            └──▶ 피드백 노드 (각도·힘·촉각)
+로봇 핸드 카메라 ──▶ 영상
 ```
 
-`network_config.py`는 WSL IP와 UDP 포트 설정을 가져오는 파일입니다. 기본 UDP 포트는 **5005**입니다. 프로젝트 루트에 `.env` 파일이 있다면 `WSL_IP` 및 `UDP_PORT`를 지정할 수 있으며, 설정하지 않은 경우 WSL IP 자동 탐지를 사용합니다.
+## 프로젝트 구조
 
-## 3. 매번 실행하는 방법
+```text
+TactileData_Collection_Pipeline/
+├── src/                       # ROS2 패키지 (모든 패키지는 여기에 둔다)
+│   ├── hand_tracking/         #   웹캠 손 인식 UDP 수신 노드
+│   ├── pose_command/          #   자세 명령 노드
+│   └── feedback_node/         #   피드백 노드
+├── windows_sender/            # Windows 웹캠 손 인식 프로그램 (ROS 패키지 아님)
+├── hardware_connection_test/  # 로봇 핸드 시뮬레이션·실물 연결 테스트
+├── external/                  # 제조사 등 외부 소스 (Git 추적 제외)
+├── build/                     # ROS2 빌드 결과 (Git 추적 제외)
+├── install/                   # ROS2 설치 결과 (Git 추적 제외)
+└── log/                       # ROS2 빌드 로그 (Git 추적 제외)
+```
 
-### 콘솔 ① — WSL Ubuntu: ROS 2 수신 노드
+## 빌드
 
-**첫 번째 WSL 터미널**을 열고 아래 명령을 실행합니다.
+프로젝트 루트에서 모든 패키지를 한 번에 빌드합니다 (`src/` 아래 패키지를 자동으로 찾음).
 
 ```bash
-cd ~/ros2_ws
+cd ~/TactileData_Collection_Pipeline
 source /opt/ros/humble/setup.bash
+colcon build --symlink-install
 source install/setup.bash
-ros2 run hand_tracking hand_tracking_node
 ```
 
-정상 실행 시 다음과 비슷한 로그가 표시됩니다.
+특정 패키지만 빌드하려면 `colcon build --symlink-install --packages-select feedback_node`처럼 지정합니다.
 
-```text
-UDP receiver started: 0.0.0.0:5005
-Publishing topic: /hand/finger_angles
-```
+## 실행 환경별 차이
 
-**이 터미널을 종료하지 마세요.** 같은 노드를 중복 실행하면 UDP 포트 충돌(`Address already in use`)이 발생할 수 있습니다.
+| 항목 | Ubuntu 22.04 (데스크탑, AGX Orin) | Windows + WSL2 |
+| --- | --- | --- |
+| 웹캠 | Ubuntu에서 직접 사용 | Windows에서 `windows_sender/`를 실행해 UDP로 전송 |
+| 실물 USB (`/dev/ttyUSB0`) | 바로 인식 | Windows에서 `usbipd`로 WSL에 연결 ([안내서](hardware_connection_test/README.md)) |
+| MuJoCo 창 | 바로 표시 | WSLg 필요 (`wsl --update`) |
+| 다른 PC와 ROS2 통신 | 같은 `ROS_DOMAIN_ID` | `.wslconfig`에 `networkingMode=mirrored` 설정 + 같은 `ROS_DOMAIN_ID` |
 
-### 콘솔 ② — Windows PowerShell: 웹캠 실행
+AGX Orin은 ARM(aarch64)이므로 `mediapipe`, `mujoco` 설치 가능 여부를 먼저 확인합니다. 어떤 환경이든 `numpy`는 1.x를 유지해야 합니다 (numpy 2는 ROS2 Humble과 충돌).
 
-**새 Windows PowerShell**을 열고 Python 환경을 활성화합니다.
+## 공통 규약
 
-```powershell
-conda activate rohand_mp
-```
+- 손가락(액추에이터) 순서: `index, middle, ring, little, thumb_root, thumb`
+- 굽힘 방향: **0 = 펴짐, 1(또는 최대 각도) = 굽힘** (MuJoCo·실물 공통)
+- 각도 단위: rad
+- 노드별 토픽은 각 패키지 README를 참고합니다.
 
-WSL에 있는 프로젝트의 `windows_sender` 폴더로 이동합니다.
+## 로봇 핸드 테스트
 
-```powershell
-cd "\\wsl.localhost\Ubuntu-22.04\home\trap\ros2_ws\src\TactileData_Collection_Pipeline\windows_sender"
-python Py_webCamReader.py
-```
-
-> `Ubuntu-22.04`와 `trap`은 개발 환경의 예시입니다. 각 팀원의 **WSL 배포판 이름과 Linux 사용자 이름**에 맞게 바꿔야 합니다. 배포판 이름은 PowerShell에서 `wsl -l -q`로 확인할 수 있습니다.
->
-> WSL에서 `cd ~/ros2_ws/src/TactileData_Collection_Pipeline/windows_sender && explorer.exe .`를 실행하면 Windows 파일 탐색기로 해당 폴더를 바로 열 수 있습니다.
-
-웹캠 화면이 나타나면 손을 카메라에 보여주고 손가락을 움직입니다. **측정값은 자동 전송**되므로 별도로 전송 버튼을 누를 필요는 없습니다.
-
-#### 웹캠 조작 키
-
-| 키 | 동작 |
-|---|---|
-| `F` | 보정값 고정 / 보정 재개 (모든 채널 보정 후 고정 가능) |
-| `C` | 보정값 초기화 |
-| `R` | 현재 측정값을 기록 목록에 추가 |
-| `S` | 기록 목록을 `measurements.csv`로 저장 |
-| `Q` | 웹캠 프로그램 종료 |
-
-처음 사용할 때는 손가락을 펴고 굽히는 동작으로 보정 범위를 충분히 학습시킨 다음 `F`로 보정을 고정하면 됩니다.
-
-### 콘솔 ③ — WSL Ubuntu: 측정값 확인
-
-**두 번째 WSL 터미널**을 열고 다음 명령을 실행합니다.
+ROS2 Humble 환경을 불러온 뒤 테스트 프로그램을 실행합니다.
 
 ```bash
+cd ~/TactileData_Collection_Pipeline
 source /opt/ros/humble/setup.bash
-source ~/ros2_ws/install/setup.bash
-ros2 topic echo /hand/finger_angles
+
+# 실물 AP002 연결 상태 및 관절 위치 확인 (읽기 전용)
+python3 hardware_connection_test/rohand_real_ros2.py
 ```
 
-손가락을 움직일 때 다음과 같이 **6개 값이 계속 변경되면 정상 작동**입니다.
+실물 손가락 제어, MuJoCo 시뮬레이터 실행 및 Windows–WSL2 USB 연결 방법은 **[Hardware Connection Test 안내서](hardware_connection_test/README.md)** 를 참고하세요.
 
-```yaml
-data:
-- 0.12
-- 0.45
-- 0.78
-- 0.23
-- 0.56
-- 0.34
----
-```
-
-토픽 타입은 `std_msgs/msg/Float32MultiArray`이고, 값은 `0.0~1.0` 범위로 정규화됩니다.
-
-| 순서 (0부터) | 의미 |
-|---|---|
-| 0 | 엄지 굽힘 |
-| 1 | 검지 굽힘 |
-| 2 | 중지 굽힘 |
-| 3 | 약지 굽힘 |
-| 4 | 소지 굽힘 |
-| 5 | 엄지 회전 |
-
-## 4. 종료 방법
-
-1. **Windows 웹캠 창**에서 `Q`를 누릅니다.
-2. **콘솔 ③**에서 `Ctrl+C`를 누릅니다.
-3. **콘솔 ①**에서 `Ctrl+C`를 누릅니다.
-
-## 5. 문제 해결
-
-| 증상 | 확인할 사항 |
-|---|---|
-| `No module named 'network_config'` | `windows_sender/network_config.py` 파일명과 위치 확인 (`.py` 확장자 필수) |
-| `mediapipe has no attribute 'solutions'` | Windows Python 버전 및 MediaPipe 호환 버전 확인. Python 3.11 + MediaPipe 0.10.21 구성 권장 |
-| `Address already in use` | WSL에서 `sudo ss -lunp \| grep ':5005'`로 포트 점유 프로세스 확인 후 중복 노드 종료 |
-| `/hand/finger_angles`가 목록에 없음 | 콘솔 ①의 노드 실행 여부 및 각 터미널의 ROS 2 환경 `source` 여부 확인 |
-| 토픽은 있지만 데이터가 없음 | Windows 웹캠에서 손이 인식되는지, 6개 값이 유효한지, Windows가 올바른 WSL IP/UDP 5005로 보내는지 확인 |
-
-### ROS 2 수신 경로만 테스트하기
-
-콘솔 ①과 ③이 실행 중인 상태에서 **추가 WSL 터미널**에 아래 명령을 입력합니다.
-
-```bash
-python3 -c 'import socket,json; s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM); s.sendto(json.dumps({"values":[0.1,0.2,0.3,0.4,0.5,0.6]}).encode(),("127.0.0.1",5005)); s.close()'
-```
-
-콘솔 ③에 `0.1`부터 `0.6`까지 출력된다면 **WSL UDP 수신 및 ROS 2 토픽 발행은 정상**입니다. 실제 웹캠 값이 안 나온다면 Windows 송신 프로그램과 네트워크 설정을 점검합니다.
-
----
-
-**핵심 실행 순서:** `WSL 수신 노드` → `Windows 웹캠 프로그램` → `WSL 토픽 확인`
+> **참고:** `external/` 및 ROS2 빌드 결과물은 GitHub 저장소에 포함되지 않으므로 개발환경에 맞게 별도 준비해야 합니다.
