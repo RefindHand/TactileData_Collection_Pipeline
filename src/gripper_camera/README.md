@@ -7,7 +7,7 @@ Orbbec **Gemini 305** CAD 모델과 가상 **Passive Stereo RGB-D 카메라**를
 | **ROS2 카메라 노드** `camera_node` | 선택한 영상을 `sensor_msgs/Image` + `CameraInfo` 토픽으로 발행 |
 | **독립 테스트** `gemini305_sim.py` | ROS 없이 선택한 영상을 OpenCV 창으로 바로 확인 |
 
-두 실행 방식은 같은 장면·렌더링·Depth 계산 코드(`gemini305_sim.py`)를 쓴다. `finger_node`/`hand_bringup` 연동, 실물 카메라, 영상 저장은 아직 구현하지 않았다.
+두 실행 방식은 같은 장면·렌더링·Depth 계산 코드(`gemini305_sim.py`)를 쓴다. ROS2 노드는 파이프라인이 실행 중이면 영상 속 손이 실제 손 자세를 따라간다 (아래 [손 자세 따라가기](#손-자세-따라가기)). `ros2 launch hand_bringup pipeline.launch.py`에 포함되어 있다. 실물 카메라, 영상 저장은 아직 구현하지 않았다.
 
 ## 준비물
 
@@ -76,8 +76,22 @@ rqt_image_view는 위의 apt 패키지가 필요하다. `depth/image_raw`(미터
 | `rate` | `30.0` | 발행 주기 상한 (Hz). Disparity/Depth는 계산 시간 때문에 더 느림 |
 | `static` | `false` | `true`면 손가락을 움직이지 않음 |
 | `hand_xml` | `''` | AP002 MJCF 경로. 비우면 `ROHAND_MODEL_XML` 또는 프로젝트의 `external/rohand_mujoco/...` |
+| `follow` | `true` | 파이프라인의 손 자세를 따라감 (아래 참고). `false`면 항상 혼자 움직임 |
 
 `mode` 외의 파라미터는 시작할 때만 정할 수 있다. 카메라 위치·방향은 `gripper_camera/model/gemini305.xml`에서 바꾼다.
+
+### 손 자세 따라가기
+
+카메라 노드는 자기 MuJoCo 장면을 따로 갖고 있으므로, 파이프라인의 손 상태를 받아 영상 속 손을 맞춘다 (`finger_node` 패키지 필요).
+
+| 받는 토픽 | 보내는 곳 | 방법 |
+| --- | --- | --- |
+| `/hand_sim/full_joint_states` | `hand_sim` (MuJoCo 백엔드) | 전체 관절 값을 그대로 복사 → 시뮬레이션과 똑같은 자세 |
+| `/hand_hw/state` | `hand_sim` 또는 `hand_serial` (실물) | 액추에이터 6개 각도를 목표로 넣고 카메라 장면의 물리로 따라감 |
+
+- 둘 다 오면 `/hand_sim/full_joint_states`를 쓰고, 0.5초 넘게 끊기면 `/hand_hw/state`를 쓴다.
+- 아무것도 받기 전에는 지금처럼 손가락이 혼자 쥐었다 편다 (`static:=true`면 정지). 한 번 따라간 뒤 입력이 끊기면 마지막 자세를 유지한다.
+- 카메라 장면에는 `hand_sim`의 테스트 공(`test_object:=ball`)이 없다. 시뮬레이션에서 공에 막힌 손가락은 영상에서 공중에 멈춘 것처럼 보인다.
 
 ## 독립 테스트 (OpenCV 창)
 

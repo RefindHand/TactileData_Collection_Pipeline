@@ -10,6 +10,7 @@
   <exec_depend>rclpy</exec_depend>
   <exec_depend>sensor_msgs</exec_depend>
   <exec_depend>rcl_interfaces</exec_depend>
+  <exec_depend>finger_node</exec_depend>
   <!-- mujoco and opencv-contrib-python are installed with pip (see README.md) -->
 
   <export>

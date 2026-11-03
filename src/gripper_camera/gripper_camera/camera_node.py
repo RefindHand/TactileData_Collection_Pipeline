@@ -12,9 +12,17 @@ and published, and only while it has a subscriber:
              ~/depth/image_color    bgr8 (colorized, for viewing)
 Invalid disparity/depth pixels are NaN. Disparity and depth are aligned to the left camera.
 Scene, rendering and stereo matching are reused from gemini305_sim.
+
+Hand pose (parameter follow, default true) follows the running pipeline:
+  /hand_sim/full_joint_states  all MuJoCo joints (hand_sim)  -> copied, same pose as the simulation
+  /hand_hw/state               6 actuators, rad (hand_sim or hand_serial, i.e. also the real hand)
+                               -> used as actuator targets, the camera's own physics follows
+Until either topic arrives (or with follow:=false) the fingers open and close by themselves
+(static:=true stops them). Once followed, a stalled pipeline holds the last pose.
 """
 import array
 import queue
+import signal
 import sys
 import threading
 import time
@@ -27,9 +35,13 @@ from rcl_interfaces.msg import ParameterDescriptor, SetParametersResult
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.parameter import Parameter
-from sensor_msgs.msg import CameraInfo, Image
+from sensor_msgs.msg import CameraInfo, Image, JointState
 
+from finger_node.common import HW_STATE_TOPIC, SIM_FULL_STATE_TOPIC
+from finger_node.sim_backend import ACTUATORS
 from gripper_camera import gemini305_sim as sim
+
+FOLLOW_TIMEOUT = 0.5  # s; full joint states older than this fall back to /hand_hw/state
 
 # mode -> (menu number, topic prefix, MuJoCo camera the stream is aligned to)
 MODES = {
@@ -80,6 +92,7 @@ class CameraNode(Node):
         rate = self.declare_parameter('rate', 30.0, read_only).value
         hand_xml = self.declare_parameter('hand_xml', '', read_only).value or sim.find_hand_xml()
         self.animate = not self.declare_parameter('static', False, read_only).value
+        follow = self.declare_parameter('follow', True, read_only).value
         if self.mode not in MODES:
             raise ValueError(f'mode must be one of {list(MODES)}, got {self.mode!r}')
         if resolution not in sim.RESOLUTIONS:
@@ -110,6 +123,16 @@ class CameraNode(Node):
                 pubs['color'] = self.create_publisher(Image, f'~/{prefix}/image_color', 5)
             self.pubs[mode] = pubs
 
+        # joint name -> qpos address, finger -> actuator id (for following the pipeline hand)
+        self.qpos_addr = {self.model.joint(j).name: int(self.model.jnt_qposadr[j])
+                          for j in range(self.model.njnt) if self.model.joint(j).name}
+        self.actuator_id = {finger: self.model.actuator(name).id for finger, name in ACTUATORS.items()}
+        self.full_state = (None, -1.0)  # (qpos by name, monotonic time)
+        self.hw_state = (None, -1.0)    # (ctrl by finger, monotonic time)
+        if follow:
+            self.create_subscription(JointState, SIM_FULL_STATE_TOPIC, self.on_full_state, 10)
+            self.create_subscription(JointState, HW_STATE_TOPIC, self.on_hw_state, 10)
+
         self.add_on_set_parameters_callback(self.on_set_parameters)
         self.start = time.monotonic()
         self.create_timer(1.0 / rate, self.tick)
@@ -124,6 +147,35 @@ class CameraNode(Node):
         if sys.stdin.isatty():
             sim.print_menu()
             threading.Thread(target=sim.read_stdin, args=(self.commands,), daemon=True).start()
+
+    def on_full_state(self, msg):
+        self.full_state = (dict(zip(msg.name, msg.position)), time.monotonic())
+
+    def on_hw_state(self, msg):
+        self.hw_state = (dict(zip(msg.name, msg.position)), time.monotonic())
+
+    def update_hand(self):
+        """Pose the hand from the pipeline if its state is fresh, else animate."""
+        now = time.monotonic()
+        positions, stamp = self.full_state
+        if positions is not None and now - stamp < FOLLOW_TIMEOUT:
+            for name, value in positions.items():
+                if name in self.qpos_addr:
+                    self.data.qpos[self.qpos_addr[name]] = value
+            mujoco.mj_forward(self.model, self.data)
+            return
+        targets, _ = self.hw_state
+        if targets is not None:  # latest actuator targets; held if the pipeline stalls
+            for finger, value in targets.items():
+                if finger in self.actuator_id:
+                    a = self.actuator_id[finger]
+                    lo, hi = self.model.actuator_ctrlrange[a]
+                    self.data.ctrl[a] = min(max(value, lo), hi)
+            sim.step_physics(self.model, self.data, now - self.start, animate=False)
+            return
+        if positions is not None:
+            return  # followed the simulation before: keep its last pose
+        sim.step_physics(self.model, self.data, now - self.start, self.animate)
 
     def on_set_parameters(self, params):
         for param in params:
@@ -148,7 +200,7 @@ class CameraNode(Node):
 
     def tick(self):
         self.handle_terminal()
-        sim.step_physics(self.model, self.data, time.monotonic() - self.start, self.animate)
+        self.update_hand()
 
         mode = self.mode
         pubs = self.pubs[mode]
@@ -186,10 +238,14 @@ def main(args=None):
             rclpy.spin_once(node, timeout_sec=0.1)
     except (KeyboardInterrupt, ExternalShutdownException):
         pass
-    finally:
-        node.destroy_node()
+    except RuntimeError:
         if rclpy.ok():
-            rclpy.shutdown()
+            raise  # a real error; otherwise Humble's take_message raced with Ctrl+C
+    finally:
+        signal.signal(signal.SIGINT, signal.SIG_IGN)  # ros2 launch forwards a second Ctrl+C
+        node.destroy_node()
+        # Ctrl+C under ros2 launch may already have shut the context down
+        rclpy.try_shutdown()
 
 
 if __name__ == '__main__':
