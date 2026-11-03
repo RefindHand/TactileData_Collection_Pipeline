@@ -8,9 +8,10 @@
                                                                                               ▼  │
                                                                       하드웨어 백엔드: MuJoCo (hand_sim) 또는 실물 (hand_serial)
 피드백 노드 (feedback_node) ◀──/finger/<f>/state, /finger/<f>/tactile──┘
+로봇 핸드 카메라 (gripper_camera, 가상 Gemini 305) ◀──/hand_sim/full_joint_states, /hand_hw/state (영상 속 손이 실제 자세를 따라감)
 ```
 
-로봇 핸드 카메라 노드는 아직 포함하지 않았다.
+카메라는 현재 MuJoCo 가상 카메라이며 실물 Gemini 305 연결은 아직 없다. 영상 확인: `ros2 run rqt_image_view rqt_image_view /gripper_camera/color/image_raw`
 
 ## 실행
 
@@ -48,9 +49,11 @@ ros2 launch hand_bringup pipeline.launch.py backend:=real enable_motion:=true
 | `log_period` | `1.0` | 손가락 노드 각도·힘 출력 주기 (초, 0이면 끔) |
 | `team_sender` | `local` | `local`: 이 PC에서 웹캠 프로그램 실행 / `remote`: 다른 PC(Windows)가 UDP 5005로 전송 |
 | `camera_device` | `0` | 웹캠 번호 `/dev/videoN` (`team_sender:=local`) |
+| `gripper_camera` | `true` | 가상 Gemini 305 카메라 실행 |
+| `camera_mode` | `rgb` | 카메라 영상: `rgb` / `left` / `right` / `disparity` / `depth` (실행 중 변경: `ros2 param set /gripper_camera mode depth`) |
 
 ## 주의
 
 - 웹캠에서 손이 0.5초 이상 사라지면 자세 명령 노드가 **모든 손가락을 펴는 명령**을 보낸다. 실물로 물체를 쥘 때 주의한다.
 - 실물 시리얼 포트는 한 프로그램만 쓸 수 있다. `hardware_connection_test`의 프로그램과 동시에 실행하지 않는다.
-- 각 노드의 토픽·준비물은 패키지별 README를 참고한다: [hand_tracking](../hand_tracking/README.md), [pose_command](../pose_command/README.md), [finger_node](../finger_node/README.md), [feedback_node](../feedback_node/README.md).
+- 각 노드의 토픽·준비물은 패키지별 README를 참고한다: [hand_tracking](../hand_tracking/README.md), [pose_command](../pose_command/README.md), [finger_node](../finger_node/README.md), [feedback_node](../feedback_node/README.md), [gripper_camera](../gripper_camera/README.md).
