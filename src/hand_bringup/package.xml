@@ -13,6 +13,7 @@
   <exec_depend>pose_command</exec_depend>
   <exec_depend>finger_node</exec_depend>
   <exec_depend>feedback_node</exec_depend>
+  <exec_depend>gripper_camera</exec_depend>
 
   <export>
     <build_type>ament_python</build_type>
