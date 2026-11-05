@@ -91,6 +91,7 @@ rqt_image_view는 위의 apt 패키지가 필요하다. `depth/image_raw`(미터
 
 - 둘 다 오면 `/hand_sim/full_joint_states`를 쓰고, 0.5초 넘게 끊기면 `/hand_hw/state`를 쓴다.
 - 아무것도 받기 전에는 지금처럼 손가락이 혼자 쥐었다 편다 (`static:=true`면 정지). 한 번 따라간 뒤 입력이 끊기면 마지막 자세를 유지한다.
+- 따라가기를 켜면(`follow:=true`) 카메라 장면의 중력도 끈다. `hand_sim`과 같은 이유로, 약한 손가락 모터가 `/hand_hw/state` 각도에 정확히 도달하게 하기 위해서다.
 - 카메라 장면에는 `hand_sim`의 테스트 공(`test_object:=ball`)이 없다. 시뮬레이션에서 공에 막힌 손가락은 영상에서 공중에 멈춘 것처럼 보인다.
 
 ## 독립 테스트 (OpenCV 창)

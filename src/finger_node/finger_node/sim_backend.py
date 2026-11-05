@@ -9,6 +9,10 @@ Owns the physics engine; finger nodes talk to it instead of to the real hand.
 
 Tactile = MuJoCo contact forces between a hand region and any non-hand body,
 summed per region. Only a rough stand-in for the real tactile sensor.
+
+Gravity is off by default (parameter gravity): the model's position actuators (kp = 1) are
+too weak to hold the fingers against it (thumb_root sagged 16 deg at target 0), and higher
+gains go unstable with these light links. The real hand's geared fingers do not sag either.
 """
 import math
 import signal
@@ -46,6 +50,11 @@ def load_model(xml_path, test_object):
         body.add_geom(name='test_object', type=obj['type'], size=obj['size'],
                       rgba=[0.9, 0.4, 0.2, 1.0])
     return spec.compile()
+
+
+def disable_gravity(model):
+    """No gravity: the weak (kp = 1) finger actuators reach their targets exactly."""
+    model.opt.gravity[:] = 0.0
 
 
 class SimBackend(Node):
@@ -153,11 +162,14 @@ def main():
     use_viewer = probe.declare_parameter('viewer', True).value
     test_object = probe.declare_parameter('test_object', 'ball').value
     rate = float(probe.declare_parameter('publish_rate', 60.0).value)  # capped by 60 Hz render loop
+    gravity = probe.declare_parameter('gravity', False).value
     probe.destroy_node()
 
     node = None
     try:
         model = load_model(xml, test_object)
+        if not gravity:
+            disable_gravity(model)
         data = mujoco.MjData(model)
         node = SimBackend(model, data)
         frame = 1.0 / 60.0

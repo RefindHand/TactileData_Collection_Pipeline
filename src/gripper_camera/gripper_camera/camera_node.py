@@ -38,7 +38,7 @@ from rclpy.parameter import Parameter
 from sensor_msgs.msg import CameraInfo, Image, JointState
 
 from finger_node.common import HW_STATE_TOPIC, SIM_FULL_STATE_TOPIC
-from finger_node.sim_backend import ACTUATORS
+from finger_node.sim_backend import ACTUATORS, disable_gravity
 from gripper_camera import gemini305_sim as sim
 
 FOLLOW_TIMEOUT = 0.5  # s; full joint states older than this fall back to /hand_hw/state
@@ -103,6 +103,8 @@ class CameraNode(Node):
         width, height = sim.RESOLUTIONS[resolution]
         sim.use_software_gl_on_wsl()
         self.model = sim.build_model(hand_xml, width, height)
+        if follow:
+            disable_gravity(self.model)  # same as hand_sim, so /hand_hw/state targets are reached
         self.data = mujoco.MjData(self.model)
         mujoco.mj_forward(self.model, self.data)
         self.camera = sim.VirtualGemini305(self.model, width, height)
