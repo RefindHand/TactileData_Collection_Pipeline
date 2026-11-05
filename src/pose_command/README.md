@@ -94,6 +94,7 @@ ros2 run pose_command pose_command_node
 | `FILTER_ALPHA` | `0.7` | 측정 각도 필터의 새 입력 반영 비율 (클수록 빠르고 떨림 증가) |
 | `DEFAULT_SPANS` | 손가락 `45°`, 엄지 굽힘 `30°`, 엄지 회전 없음 | 쥐어 보기 전 임시 범위 폭 (deg) |
 | `MIN_RANGE` | `10.0` | 이보다 좁은 범위는 보정 전으로 보고 0.0 (펴짐) 출력 |
+| `DEADBAND` | `5.0` | 양 끝 데드존 (deg). 가장 펴진·쥔 값에서 이 안쪽은 정확히 0.0 / 1.0 (MediaPipe 떨림 흡수) |
 | `REVERSE_THUMB_ROOT` | `True` | 엄지 뿌리 명령 방향 반전 (웹캠 테스트로 반대 방향 확인) |
 
 ## 8. Limitations

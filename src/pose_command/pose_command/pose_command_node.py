@@ -31,6 +31,9 @@ DEFAULT_SPANS = [
     30.0,
 ]
 MIN_RANGE = 10.0    # deg; narrower ranges output 0 (open)
+# Dead zone at both ends (deg): MediaPipe jitters a few degrees, so values within this of
+# the most open / most closed pose seen map to exactly 0 / 1.
+DEADBAND = 5.0
 
 SAFE_TARGETS = [0.0] * 6
 
@@ -211,6 +214,11 @@ class AutoRange:
 
         return self.low, high
 
+    def dead_zone(self):
+        """Per-end dead zone, shrunk on narrow ranges so the mapping keeps >= MIN_RANGE."""
+        low, high = self.bounds()
+        return clamp((high - low - MIN_RANGE) / 2.0, 0.0, DEADBAND)
+
     def normalize(self, value):
         bounds = self.bounds()
 
@@ -218,7 +226,8 @@ class AutoRange:
             return 0.0
 
         low, high = bounds
-        return clamp((value - low) / (high - low))
+        dead = self.dead_zone()
+        return clamp((value - low - dead) / (high - low - 2.0 * dead))
 
 
 class PoseCommandNode(Node):
