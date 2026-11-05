@@ -18,16 +18,17 @@ INPUT_TIMEOUT = 0.5
 FILTER_ALPHA = 0.7
 
 # Auto calibration: each channel maps its observed [min, max] angle to 0~1
-# (0 = open). The range starts from these defaults (deg) and only widens,
-# so opening and closing the hand once calibrates it.
+# (0 = open). Both ends come only from observed values, so the most open pose
+# seen is exactly 0 (a fully open hand still measures ~15-25 deg of flexion).
+# Until the hand has been closed once, the top end is at least min + DEFAULT_SPAN.
 # Order == FINGERS: [index, middle, ring, little, thumb_root, thumb]
-DEFAULT_RANGES = [
-    (15.0, 60.0),
-    (15.0, 60.0),
-    (15.0, 60.0),
-    (15.0, 60.0),
+DEFAULT_SPANS = [
+    45.0,
+    45.0,
+    45.0,
+    45.0,
     None,           # thumb rotation: no sensible default, learned only
-    (10.0, 40.0),
+    30.0,
 ]
 MIN_RANGE = 10.0    # deg; narrower ranges output 0 (open)
 
@@ -184,25 +185,40 @@ def measure_hand(landmarks):
 class AutoRange:
     """Observed [min, max] of one channel, widened by every new value."""
 
-    def __init__(self, default):
-        self.default = default
+    def __init__(self, default_span):
+        self.default_span = default_span
         self.reset()
 
     def reset(self):
-        if self.default is None:
-            self.low, self.high = math.inf, -math.inf
-        else:
-            self.low, self.high = self.default
+        self.low, self.high = math.inf, -math.inf
 
     def update(self, value):
         self.low = min(self.low, value)
         self.high = max(self.high, value)
 
+    def bounds(self):
+        """(low, high) used for mapping, or None before enough range is seen."""
+        if self.low > self.high:
+            return None
+
+        high = self.high
+
+        if self.default_span is not None:
+            high = max(high, self.low + self.default_span)
+
+        if high - self.low < MIN_RANGE:
+            return None
+
+        return self.low, high
+
     def normalize(self, value):
-        if self.high - self.low < MIN_RANGE:
+        bounds = self.bounds()
+
+        if bounds is None:
             return 0.0
 
-        return clamp((value - self.low) / (self.high - self.low))
+        low, high = bounds
+        return clamp((value - low) / (high - low))
 
 
 class PoseCommandNode(Node):
@@ -243,7 +259,7 @@ class PoseCommandNode(Node):
             10
         )
 
-        self.ranges = [AutoRange(default) for default in DEFAULT_RANGES]
+        self.ranges = [AutoRange(span) for span in DEFAULT_SPANS]
 
         self.last_valid_input = None
         self.filtered_angles = None
@@ -375,8 +391,8 @@ class PoseCommandNode(Node):
 
         thumb_root = FINGERS.index('thumb_root')
 
-        if REVERSE_THUMB_ROOT and self.ranges[thumb_root].high - \
-                self.ranges[thumb_root].low >= MIN_RANGE:
+        if REVERSE_THUMB_ROOT and \
+                self.ranges[thumb_root].bounds() is not None:
             targets[thumb_root] = 1.0 - targets[thumb_root]
 
         self.publish_targets(targets)
@@ -389,8 +405,8 @@ class PoseCommandNode(Node):
                 + str([round(v, 3) for v in targets])
                 + ' | ranges(deg): '
                 + str([
-                    (round(r.low), round(r.high))
-                    if r.high >= r.low else None
+                    tuple(round(v) for v in r.bounds())
+                    if r.bounds() is not None else None
                     for r in self.ranges
                 ])
             )
