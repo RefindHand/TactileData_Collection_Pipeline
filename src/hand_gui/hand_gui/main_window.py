@@ -27,6 +27,7 @@ from hand_gui.hand_view import HandView
 from hand_gui.recorder import Recorder
 from hand_gui import theme
 from hand_gui.uploader import INSTALL_HINT, UploadWorker, hub_available
+from hand_gui.webcam_source import NETWORK, NONE, LocalSender, resolve_source, usb_cameras
 
 RATE = 30.0              # recording and plot sampling rate (Hz)
 UI_RATE = 15.0           # screen refresh: images, 3D hand, plots (Hz)
@@ -37,6 +38,11 @@ COLORS = {'index': '#1f77b4', 'middle': '#ff7f0e', 'ring': '#2ca02c', 'little': 
           'thumb': '#9467bd', 'thumb_root': '#8c564b', 'palm': '#7f7f7f'}
 NAMES_KO = {'index': '검지', 'middle': '중지', 'ring': '약지', 'little': '소지',
             'thumb': '엄지', 'thumb_root': '엄지 회전', 'palm': '손바닥'}
+WEBCAM_HINTS = {
+    NONE: '웹캠 영상 없음\n(/webcam/image_annotated/compressed)',
+    NETWORK: 'Windows 카메라 영상 기다리는 중\n\nPowerShell의 windows_sender 폴더에서 실행:\n'
+             'python windows_webcam_sender.py --camera 0',
+}
 
 
 def heat_color(fraction):
@@ -82,6 +88,11 @@ class ImagePanel(QWidget):
         layout.addWidget(self.title)
         layout.addWidget(self.view, 1)
         self.pixmap = None
+
+    def set_placeholder(self, text):
+        self.placeholder = text
+        if self.pixmap is None:
+            self.view.setText(text)
 
     def show_rgb(self, rgb):
         if rgb is None:
@@ -199,7 +210,7 @@ class UploadDialog(QDialog):
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, bridge, data_dir, test_object='none', hand_xml=''):
+    def __init__(self, bridge, data_dir, test_object='none', hand_xml='', webcam_source=NONE):
         super().__init__()
         self.bridge = bridge
         self.data_dir = Path(data_dir).expanduser()
@@ -211,7 +222,9 @@ class MainWindow(QMainWindow):
 
         self.hand_view = HandView(640, 480, test_object=test_object, hand_xml=hand_xml)
         self.hand_panel = HandPanel(self.hand_view)
-        self.webcam_panel = ImagePanel('웹캠 (사람 손)', '웹캠 영상 없음\n(/webcam/image_annotated/compressed)')
+        self.webcam_panel = ImagePanel('웹캠 (사람 손)', WEBCAM_HINTS[NONE])
+        self.webcam_sender = LocalSender()
+        self.webcam_panel.layout().insertLayout(1, self.build_webcam_row())
         # turned like the hand view, which makes it portrait: fill the panel, crop top/bottom
         self.robot_cam_panel = ImagePanel('로봇 핸드 카메라',
                                           f'로봇 카메라 영상 없음\n({bridge.robot_camera_topic})',
@@ -253,6 +266,8 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(main)
         self.status = self.statusBar()
         self.refresh_episodes()
+        self.fill_webcam_list(webcam_source)
+        self.select_webcam()
 
         length = int(HISTORY_S * RATE)
         self.history_t = collections.deque(maxlen=length)
@@ -270,6 +285,48 @@ class MainWindow(QMainWindow):
         self.ui_timer = QTimer(self)
         self.ui_timer.timeout.connect(self.refresh)
         self.ui_timer.start(int(round(1000 / UI_RATE)))
+
+    # ---- webcam source -----------------------------------------------------------
+    def build_webcam_row(self):
+        self.webcam_combo = QComboBox()
+        self.webcam_combo.setToolTip('손 인식에 쓸 카메라')
+        self.webcam_combo.activated.connect(self.select_webcam)
+        self.webcam_rescan = QPushButton('새로고침')
+        self.webcam_rescan.setToolTip('연결된 USB 카메라 다시 찾기')
+        self.webcam_rescan.clicked.connect(self.rescan_webcams)
+        row = QHBoxLayout()
+        row.addWidget(self.webcam_combo, 1)
+        row.addWidget(self.webcam_rescan)
+        return row
+
+    def fill_webcam_list(self, source):
+        cameras = usb_cameras()
+        self.webcam_combo.clear()
+        self.webcam_combo.addItem('사용 안 함', NONE)
+        for device, name in cameras:
+            self.webcam_combo.addItem(f'USB: {name} ({device})', device)
+        self.webcam_combo.addItem('Windows 카메라 (PowerShell 연결)', NETWORK)
+        self.webcam_combo.setCurrentIndex(self.webcam_combo.findData(resolve_source(source, cameras)))
+
+    def rescan_webcams(self):
+        current = self.webcam_combo.currentData()
+        self.fill_webcam_list(current)
+        if self.webcam_combo.currentData() != current:  # the selected camera was unplugged
+            self.select_webcam()
+
+    def select_webcam(self):
+        source = self.webcam_combo.currentData()
+        self.webcam_sender.stop()
+        if source in WEBCAM_HINTS:
+            self.webcam_panel.set_placeholder(WEBCAM_HINTS[source])
+        else:
+            self.webcam_sender.start(source)
+            self.webcam_panel.set_placeholder(f'{source} 여는 중...')
+
+    def check_webcam_sender(self):
+        code = self.webcam_sender.exit_code()
+        if code is not None:
+            self.webcam_panel.set_placeholder(f'웹캠 프로그램이 종료됨 (코드 {code})\n터미널 로그를 확인하세요')
 
     # ---- left side: data saving tabs -------------------------------------------
     def build_sidebar(self):
@@ -387,12 +444,16 @@ class MainWindow(QMainWindow):
             self.record_button.setText('■ 녹화 정지')
             self.folder_button.setEnabled(False)
             self.upload_button.setEnabled(False)
+            self.webcam_combo.setEnabled(False)
+            self.webcam_rescan.setEnabled(False)
             self.status.showMessage(f'녹화 중: {folder}')
         else:
             folder, frames = self.recorder.stop()
             self.record_button.setText('● 녹화 시작')
             self.folder_button.setEnabled(True)
             self.upload_button.setEnabled(True)
+            self.webcam_combo.setEnabled(True)
+            self.webcam_rescan.setEnabled(True)
             self.record_label.setText(f'저장됨: {folder.name} ({frames} 프레임)' if folder else '대기 중')
             if folder:
                 self.status.showMessage(f'저장 완료: {folder}', 10000)
@@ -509,6 +570,7 @@ class MainWindow(QMainWindow):
                 self.history[key][r].append(e[key] if now - e['stamp'] <= STALE_S else np.nan)
 
     def update_status(self, snap, webcam_ok, robot_ok):
+        self.check_webcam_sender()
         now = snap['time']
         fingers = sum(now - e['stamp'] <= STALE_S for e in snap['fingers'].values())
         tactile = sum(now - e['stamp'] <= STALE_S for e in snap['tactile'].values())
@@ -522,6 +584,7 @@ class MainWindow(QMainWindow):
                 f'{time.strftime("%H:%M:%S")}')
 
     def closeEvent(self, event):
+        self.webcam_sender.stop()
         self.running = False
         self.sampler.join(timeout=1.0)
         if self.recorder.active:

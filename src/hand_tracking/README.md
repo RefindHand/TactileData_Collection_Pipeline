@@ -31,6 +31,8 @@ UDP 메시지 형식 (JSON): `{"landmarks": [63개], "values": [6개]}`. `values
 >
 > 전체 파이프라인은 `ros2 launch hand_bringup pipeline.launch.py` 하나로 두 노드를 함께 실행합니다. 아래는 Windows + WSL 구성입니다.
 
+> **WSL에서 GUI의 웹캠 칸에 영상 보기:** `python Py_webCamReader.py` 대신 `python windows_webcam_sender.py --camera 0`을 실행합니다. 손 좌표는 그대로 UDP 5005로, 관절이 표시된 영상은 UDP 5006으로 보내며 `webcam_image_receiver`가 이를 `/webcam/image_annotated/compressed`로 발행합니다. 창은 뜨지 않고 Ctrl+C로 종료합니다(`--window`를 붙이면 창과 키를 함께 사용). 자세한 내용은 [hand_gui README](../hand_gui/README.md)를 참고합니다.
+
 **총 3개의 콘솔**을 사용합니다. 콘솔 ①과 ③은 **WSL Ubuntu**, 콘솔 ②는 **Windows PowerShell**입니다.
 
 | 콘솔 | 환경 | 역할 |

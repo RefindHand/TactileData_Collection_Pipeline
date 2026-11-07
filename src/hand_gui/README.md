@@ -33,8 +33,44 @@ ros2 run hand_gui hand_gui --ros-args -p data_dir:=~/tactile_dataset -p test_obj
 | `hand_xml` | `''` | AP002 MJCF 경로 (비우면 `external/rohand_mujoco/...`) |
 | `robot_camera_topic` | `/gripper_camera/color/image_raw` | 로봇 핸드 카메라 영상 (`sensor_msgs/Image`, rgb8/bgr8/mono8) |
 | `webcam_topic` | `/webcam/image_annotated/compressed` | 웹캠 영상 (`sensor_msgs/CompressedImage`) |
+| `webcam_source` | `none` | 시작할 때 선택할 카메라: `none`, `network`, `/dev/videoN` (`hand_bringup`이 자동으로 지정) |
 
-웹캠 영상은 `linux_webcam_sender --publish-image`가 보낸다 (`hand_bringup`은 자동으로 켬). `gui:=true`이면 웹캠 프로그램은 창 없이(`--no-window`) 돌고 MuJoCo 창도 열지 않는다. 웹캠 창의 보정 키(`F` 등)는 확인용 값에만 쓰이고, 로봇 제어용 보정은 자세 명령 노드가 자동으로 하므로 **보정** 탭의 초기화 버튼으로 충분하다. Windows에서 웹캠을 실행하는 경우(`team_sender:=remote`)에는 웹캠 칸이 비어 있다.
+`gui:=true`이면 MuJoCo 창과 웹캠 창은 열리지 않는다. 웹캠 창의 보정 키(`F` 등)는 확인용 값에만 쓰이고, 로봇 제어용 보정은 자세 명령 노드가 자동으로 하므로 **보정** 탭의 초기화 버튼으로 충분하다.
+
+WSL에서는 로봇 손 화면이 깨지지 않도록 소프트웨어 렌더링(`LIBGL_ALWAYS_SOFTWARE=1`)을 자동으로 켠다.
+
+## 웹캠 선택
+
+웹캠 칸 위의 목록에서 손 인식에 쓸 카메라를 고른다. 어떤 카메라를 골라도 영상은 같은 토픽으로, 손 좌표는 같은 UDP 포트로 들어오므로 나머지 파이프라인은 그대로다. 녹화 중에는 바꿀 수 없다.
+
+| 항목 | 동작 | 환경 |
+| --- | --- | --- |
+| `USB: 이름 (/dev/videoN)` | GUI가 `linux_webcam_sender`를 창 없이 실행한다. 다른 카메라를 고르거나 GUI를 닫으면 끈다 | 네이티브 Ubuntu |
+| `Windows 카메라 (PowerShell 연결)` | PowerShell에서 `windows_webcam_sender.py`를 실행해 연결한다. 영상은 `webcam_image_receiver`가 받는다 | WSL |
+| `사용 안 함` | GUI는 아무것도 실행하지 않고, 토픽에 들어오는 영상만 보여 준다 | 공통 |
+
+USB 카메라를 새로 꽂으면 **새로고침**을 누른다.
+
+```bash
+# 네이티브 Ubuntu: /dev/video0으로 시작, 다른 USB 카메라는 GUI에서 선택
+ros2 launch hand_bringup pipeline.launch.py gui:=true
+ros2 launch hand_bringup pipeline.launch.py gui:=true camera_device:=2   # 시작 카메라 지정
+
+# WSL: 같은 명령. /dev/video0이 없으면 자동으로 Windows 카메라를 선택
+ros2 launch hand_bringup pipeline.launch.py gui:=true
+```
+
+WSL에서는 PowerShell에서 카메라를 연결한다. 준비는 [hand_tracking README](../hand_tracking/README.md)의 Windows 환경 구성과 같다.
+
+```powershell
+conda activate rohand_mp
+cd "\\wsl.localhost\Ubuntu-22.04\home\<사용자이름>\TactileData_Collection_Pipeline\windows_sender"
+python windows_webcam_sender.py --camera 0     # 다른 카메라면 번호 변경, 종료는 Ctrl+C
+```
+
+웹캠 창과 `F`/`R`/`S`/`C`/`Q` 키가 필요하면 `--window`를 붙인다.
+
+`ros2 run hand_gui hand_gui`로 따로 실행하면 기본값이 `none`이라 이미 실행 중인 웹캠과 충돌하지 않는다. 카메라를 바로 쓰려면 `-p webcam_source:=/dev/video2`처럼 지정한다. Windows 카메라를 쓰려면 `ros2 run hand_tracking webcam_image_receiver`도 실행되어 있어야 한다 (`hand_bringup`은 자동으로 켬).
 
 ## 화면
 

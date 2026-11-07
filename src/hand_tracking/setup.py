@@ -27,6 +27,8 @@ setup(
             'hand_tracking_node = hand_tracking.hand_tracking_node:main',
             # Run windows_sender/Py_webCamReader.py on Ubuntu (desktop, AGX Orin)
             'linux_webcam_sender = hand_tracking.linux_webcam_sender:main',
+            # Frames from windows_sender/windows_webcam_sender.py -> image topic (GUI on WSL)
+            'webcam_image_receiver = hand_tracking.webcam_image_receiver:main',
         ],
     },
 )

@@ -111,7 +111,7 @@ ros2 topic echo /finger/index/angle_force
 
 | 항목 | Ubuntu 22.04 (데스크탑, AGX Orin) | Windows + WSL2 |
 | --- | --- | --- |
-| 웹캠 | Ubuntu에서 직접 사용 (`team_sender:=local`, 기본) | Windows에서 `windows_sender/`를 실행해 UDP로 전송 (`team_sender:=remote`) |
+| 웹캠 | Ubuntu에서 직접 사용 (`team_sender:=local`, 기본). GUI에서는 USB 카메라 선택 | Windows에서 `windows_sender/`를 실행해 UDP로 전송 (`team_sender:=remote`). GUI에는 `windows_webcam_sender.py`로 영상까지 전송 |
 | 실물 USB (`/dev/ttyUSB0`) | 바로 인식 | Windows에서 `usbipd`로 WSL에 연결 ([안내서](hardware_connection_test/README.md)) |
 | MuJoCo 창 | 바로 표시 | WSLg 필요 (`wsl --update`) |
 | 다른 PC와 ROS2 통신 | 같은 `ROS_DOMAIN_ID` | `.wslconfig`에 `networkingMode=mirrored` 설정 + 같은 `ROS_DOMAIN_ID` |

@@ -1,6 +1,8 @@
 """Whole pipeline in one launch.
 
   webcam (hand_tracking) -> /hand_landmarks -> pose_command -> /finger/<f>/command
+  With gui:=true the GUI starts the webcam itself and lets you switch cameras: a USB camera on
+  this PC, or a Windows camera (WSL) sent by windows_sender/windows_webcam_sender.py.
   -> finger nodes x6 -> hardware backend (MuJoCo or real AP002) -> feedback node
   gripper camera (virtual Gemini 305): its hand follows /hand_sim/full_joint_states or /hand_hw/state
 
@@ -12,6 +14,7 @@
   ros2 launch hand_bringup pipeline.launch.py camera_mode:=depth                # camera stream
   ros2 launch hand_bringup pipeline.launch.py gripper_camera:=false             # no camera
   ros2 launch hand_bringup pipeline.launch.py gui:=true                         # data collection GUI
+  ros2 launch hand_bringup pipeline.launch.py gui:=true team_sender:=remote     # start on the Windows camera
 """
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
@@ -39,7 +42,8 @@ ARGS = {
     'gripper_camera': ('true', 'virtual Gemini 305 gripper camera (MuJoCo)'),
     'camera_mode': ('rgb', 'gripper camera stream: rgb | left | right | disparity | depth'),
     'gui': ('false', 'data collection GUI (hand_gui): hand view, cameras, force plots, recording. '
-                     'With gui:=true the MuJoCo viewer and the webcam window stay closed'),
+                     'With gui:=true the MuJoCo viewer and the webcam window stay closed, '
+                     'and the webcam is selected in the GUI'),
     'data_dir': ('~/tactile_dataset', 'hand_gui episode folder'),
 }
 
@@ -62,10 +66,9 @@ def generate_launch_description():
              name='linux_webcam_sender', output='screen',
              arguments=['--device', cfg['camera_device'], '--publish-image'],
              condition=IfCondition(PythonExpression([local_sender, ' and not ', gui]))),
-        Node(package='hand_tracking', executable='linux_webcam_sender',
-             name='linux_webcam_sender', output='screen',
-             arguments=['--device', cfg['camera_device'], '--publish-image', '--no-window'],
-             condition=IfCondition(PythonExpression([local_sender, ' and ', gui]))),
+        # frames from a Windows camera (windows_webcam_sender.py); idle otherwise
+        Node(package='hand_tracking', executable='webcam_image_receiver',
+             name='webcam_image_receiver', output='screen'),
 
         # pose command: /hand_landmarks -> /finger/<f>/command
         Node(package='pose_command', executable='pose_command_node',
@@ -92,6 +95,10 @@ def generate_launch_description():
              # the test ball only exists in the simulation
              parameters=[{'data_dir': cfg['data_dir'],
                           'test_object': PythonExpression(["'", cfg['test_object'], "' if '",
-                                                           cfg['backend'], "' == 'sim' else 'none'"])}],
+                                                           cfg['backend'], "' == 'sim' else 'none'"]),
+                          # camera selected at start; a missing one falls back (webcam_source.py)
+                          'webcam_source': PythonExpression(["'network' if '", cfg['team_sender'],
+                                                             "' == 'remote' else '/dev/video",
+                                                             cfg['camera_device'], "'"])}],
              condition=IfCondition(cfg['gui'])),
     ])
