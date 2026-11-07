@@ -11,6 +11,7 @@
 
   ros2 launch hand_bringup pipeline.launch.py camera_mode:=depth                # camera stream
   ros2 launch hand_bringup pipeline.launch.py gripper_camera:=false             # no camera
+  ros2 launch hand_bringup pipeline.launch.py gui:=true                         # data collection GUI
 """
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
@@ -37,11 +38,20 @@ ARGS = {
     'camera_device': ('0', 'webcam index /dev/videoN (team_sender:=local)'),
     'gripper_camera': ('true', 'virtual Gemini 305 gripper camera (MuJoCo)'),
     'camera_mode': ('rgb', 'gripper camera stream: rgb | left | right | disparity | depth'),
+    'gui': ('false', 'data collection GUI (hand_gui): hand view, cameras, force plots, recording. '
+                     'With gui:=true the MuJoCo viewer and the webcam window stay closed'),
+    'data_dir': ('~/tactile_dataset', 'hand_gui episode folder'),
 }
 
 
 def generate_launch_description():
     cfg = {k: LaunchConfiguration(k) for k in ARGS}
+    gui = PythonExpression(["'", cfg['gui'], "' == 'true'"])
+    local_sender = PythonExpression(["'", cfg['team_sender'], "' == 'local'"])
+    # the GUI shows the hand and the webcam, so their own windows stay closed
+    finger_args = {**{k: cfg[k] for k in FINGER_ARGS},
+                   'viewer': PythonExpression(["'false' if '", cfg['gui'], "' == 'true' else '",
+                                               cfg['viewer'], "'"])}
     return LaunchDescription([
         *[DeclareLaunchArgument(k, default_value=v, description=d) for k, (v, d) in ARGS.items()],
 
@@ -50,8 +60,12 @@ def generate_launch_description():
              name='hand_tracking_node', output='screen'),
         Node(package='hand_tracking', executable='linux_webcam_sender',
              name='linux_webcam_sender', output='screen',
-             arguments=['--device', cfg['camera_device']],
-             condition=IfCondition(PythonExpression(["'", cfg['team_sender'], "' == 'local'"]))),
+             arguments=['--device', cfg['camera_device'], '--publish-image'],
+             condition=IfCondition(PythonExpression([local_sender, ' and not ', gui]))),
+        Node(package='hand_tracking', executable='linux_webcam_sender',
+             name='linux_webcam_sender', output='screen',
+             arguments=['--device', cfg['camera_device'], '--publish-image', '--no-window'],
+             condition=IfCondition(PythonExpression([local_sender, ' and ', gui]))),
 
         # pose command: /hand_landmarks -> /finger/<f>/command
         Node(package='pose_command', executable='pose_command_node',
@@ -61,7 +75,7 @@ def generate_launch_description():
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(PathJoinSubstitution(
                 [FindPackageShare('finger_node'), 'launch', 'fingers.launch.py'])),
-            launch_arguments={k: cfg[k] for k in FINGER_ARGS}.items()),
+            launch_arguments=finger_args.items()),
 
         # feedback: /finger/<f>/state, tactile -> /feedback/*
         Node(package='feedback_node', executable='feedback_node',
@@ -72,4 +86,12 @@ def generate_launch_description():
              name='gripper_camera', output='screen',
              parameters=[{'mode': cfg['camera_mode'], 'follow': True}],
              condition=IfCondition(cfg['gripper_camera'])),
+
+        # data collection GUI
+        Node(package='hand_gui', executable='hand_gui', name='hand_gui', output='screen',
+             # the test ball only exists in the simulation
+             parameters=[{'data_dir': cfg['data_dir'],
+                          'test_object': PythonExpression(["'", cfg['test_object'], "' if '",
+                                                           cfg['backend'], "' == 'sim' else 'none'"])}],
+             condition=IfCondition(cfg['gui'])),
     ])

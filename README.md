@@ -24,6 +24,7 @@
 | 피드백 노드 (각도·힘·촉각 피드백) | `src/feedback_node` | [README](src/feedback_node/README.md) |
 | 로봇 핸드 카메라 노드 (Gemini 305, 현재 MuJoCo 가상 카메라) | `src/gripper_camera` | [README](src/gripper_camera/README.md) |
 | 전체 실행 (통합) | `src/hand_bringup` | [README](src/hand_bringup/README.md) |
+| 데이터 수집 GUI (힘 표시·녹화·Hugging Face 업로드) | `src/hand_gui` | [README](src/hand_gui/README.md) |
 
 ```text
 웹캠 ──/hand_landmarks──▶ 자세 명령 ──/finger/<f>/command──▶ 손가락 노드 ×6 ──▶ 로봇 핸드 (MuJoCo 또는 실물)
@@ -38,6 +39,7 @@
 TactileData_Collection_Pipeline/
 ├── src/                       # ROS2 패키지 (모든 패키지는 여기에 둔다)
 │   ├── hand_bringup/          #   전체 파이프라인 launch
+│   ├── hand_gui/              #   데이터 수집 GUI (힘 표시, 녹화, 업로드)
 │   ├── hand_tracking/         #   웹캠 손 인식 UDP 수신 노드 + Ubuntu용 웹캠 실행
 │   ├── finger_node/           #   손가락 노드 + 하드웨어 백엔드 (MuJoCo / 실물 AP002)
 │   ├── pose_command/          #   자세 명령 노드
@@ -73,6 +75,23 @@ ros2 launch hand_bringup pipeline.launch.py backend:=real enable_motion:=true  #
 ```
 
 웹캠 창이 뜨면 손을 한 번 끝까지 쥐었다 펴고 엄지를 크게 돌린 뒤(자동 보정) 손을 움직입니다. 자세한 내용은 [hand_bringup README](src/hand_bringup/README.md)를 참고합니다.
+
+## 데이터 수집 GUI
+
+```bash
+pip install --user "pyqtgraph==0.13.7" "numpy<2"     # 최초 1회
+ros2 launch hand_bringup pipeline.launch.py gui:=true                                    # 시뮬레이션
+ros2 launch hand_bringup pipeline.launch.py backend:=real enable_motion:=true gui:=true  # 실물
+```
+
+GUI 창 하나에 로봇 손(힘 표시), 웹캠, 로봇 핸드 카메라, 힘 그래프가 나옵니다 (MuJoCo 창·웹캠 창은 열지 않음).
+
+1. 왼쪽 **녹화** 탭에서 작업(MW / LP / TFP / PS 등)과 메모를 입력합니다.
+2. **● 녹화 시작** → 동작 → **■ 녹화 정지**. 한 번이 에피소드 하나이며 `~/tactile_dataset/episode_NNNNNN/`에 저장됩니다.
+3. **업로드** 탭에서 Hugging Face 데이터셋 저장소로 올립니다 (`pip install --user "huggingface_hub<1"`, `huggingface-cli login` 필요).
+4. 로봇 손가락이 덜/더 굽으면 **보정** 탭의 "손 보정 초기화" 후 손을 한 번 끝까지 폈다 쥡니다.
+
+자세한 내용은 [hand_gui README](src/hand_gui/README.md)를 참고합니다.
 
 ## 로봇 핸드만 움직이기 (손가락 노드)
 

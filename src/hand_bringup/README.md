@@ -51,9 +51,11 @@ ros2 launch hand_bringup pipeline.launch.py backend:=real enable_motion:=true
 | `camera_device` | `0` | 웹캠 번호 `/dev/videoN` (`team_sender:=local`) |
 | `gripper_camera` | `true` | 가상 Gemini 305 카메라 실행 |
 | `camera_mode` | `rgb` | 카메라 영상: `rgb` / `left` / `right` / `disparity` / `depth` (실행 중 변경: `ros2 param set /gripper_camera mode depth`) |
+| `gui` | `false` | 데이터 수집 GUI ([hand_gui](../hand_gui/README.md)): 로봇 손 힘 표시, 웹캠·로봇 카메라, 힘 그래프, 녹화, Hugging Face 업로드. `true`이면 MuJoCo 창과 웹캠 창은 열지 않음 |
+| `data_dir` | `~/tactile_dataset` | GUI 녹화 저장 폴더 |
 
 ## 주의
 
 - 웹캠에서 손이 0.5초 이상 사라지면 자세 명령 노드가 **모든 손가락을 펴는 명령**을 보낸다. 실물로 물체를 쥘 때 주의한다.
 - 실물 시리얼 포트는 한 프로그램만 쓸 수 있다. `hardware_connection_test`의 프로그램과 동시에 실행하지 않는다.
-- 각 노드의 토픽·준비물은 패키지별 README를 참고한다: [hand_tracking](../hand_tracking/README.md), [pose_command](../pose_command/README.md), [finger_node](../finger_node/README.md), [feedback_node](../feedback_node/README.md), [gripper_camera](../gripper_camera/README.md).
+- 각 노드의 토픽·준비물은 패키지별 README를 참고한다: [hand_tracking](../hand_tracking/README.md), [pose_command](../pose_command/README.md), [finger_node](../finger_node/README.md), [feedback_node](../feedback_node/README.md), [gripper_camera](../gripper_camera/README.md), [hand_gui](../hand_gui/README.md).

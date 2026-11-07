@@ -27,6 +27,8 @@ UDP 메시지 형식 (JSON): `{"landmarks": [63개], "values": [6개]}`. `values
 > ros2 run hand_tracking linux_webcam_sender --device 0      # 터미널 2 (프로젝트 루트에서)
 > ```
 >
+> `--publish-image`를 붙이면 웹캠 창 영상(관절 표시 포함)을 `/webcam/image_annotated/compressed`로도 보내고(GUI용), `--no-window`를 붙이면 창 없이 실행합니다(화면 없는 기기용).
+>
 > 전체 파이프라인은 `ros2 launch hand_bringup pipeline.launch.py` 하나로 두 노드를 함께 실행합니다. 아래는 Windows + WSL 구성입니다.
 
 **총 3개의 콘솔**을 사용합니다. 콘솔 ①과 ③은 **WSL Ubuntu**, 콘솔 ②는 **Windows PowerShell**입니다.
