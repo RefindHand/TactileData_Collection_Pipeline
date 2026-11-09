@@ -89,4 +89,5 @@ launch 인자: `backend` (sim/real), `viewer`, `test_object` (ball/none), `port`
 - 목표값은 모아 두었다가 주기마다(기본 10 Hz) 6개를 한 번에 쓰고(Modbus `0x10`), 바뀌었을 때만 쓴다. 시작할 때 손에 들어 있는 목표값을 먼저 읽어 명령받지 않은 손가락이 움직이지 않게 한다.
 - 힘은 펌웨어 `ROH_FINGER_FORCE`(mN)를 N으로 변환. 촉각 센서 종류(점 배열 / 3D 힘)는 자동 감지한다.
 - 참고용으로 펌웨어 각도를 `/hand_hw/firmware_angle`(`JointState`, rad)로 따로 발행한다.
-- 레지스터 주소·촉각 디코딩은 제조사 데모(`oymotion/roh_gen2_demos`) 기준이며, 현재는 가짜 Modbus 장치로만 검증했다.
+- 레지스터 주소·촉각 디코딩은 제조사 데모(`oymotion/roh_gen2_demos`) 기준이며, `real_mode:=position`은 실물 AP002에서 동작을 확인했다.
+- 위치·각도·힘 레지스터는 묶음마다 따로 읽는다. 묶음 사이의 예약 레지스터(`1151`~`1154` 등)를 포함해 한 번에 읽으면 실물이 `IllegalAddress`로 거절한다.

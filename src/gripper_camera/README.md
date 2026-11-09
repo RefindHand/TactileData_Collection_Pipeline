@@ -7,6 +7,8 @@ Orbbec **Gemini 305** CAD 모델과 가상 **Passive Stereo RGB-D 카메라**를
 | **ROS2 카메라 노드** `camera_node` | 선택한 영상을 `sensor_msgs/Image` + `CameraInfo` 토픽으로 발행 |
 | **독립 테스트** `gemini305_sim.py` | ROS 없이 선택한 영상을 OpenCV 창으로 바로 확인 |
 
+실물 그리퍼 카메라는 계획이 바뀌어 **RealSense D415**를 사용하며, 이 패키지가 아니라 `realsense2_camera` 노드로 실행한다 ([실행 방법](../../README.md#실물-로봇-핸드--그리퍼-카메라-실행-wsl)). 이 패키지의 Gemini 305 모델은 시뮬레이션용 가상 카메라다.
+
 두 실행 방식은 같은 장면·렌더링·Depth 계산 코드(`gemini305_sim.py`)를 쓴다. ROS2 노드는 파이프라인이 실행 중이면 영상 속 손이 실제 손 자세를 따라간다 (아래 [손 자세 따라가기](#손-자세-따라가기)). `ros2 launch hand_bringup pipeline.launch.py`에 포함되어 있다. 실물 카메라, 영상 저장은 아직 구현하지 않았다.
 
 ## 준비물

@@ -188,7 +188,8 @@ class RealBackend(Node):
             if self.dirty and self.enable_motion:
                 self.dirty = False
                 self.write_block(self.target_addr, self.targets)
-            block = self.read(POS_ADDR, FORCE_ADDR + 6 - POS_ADDR)  # positions .. angles .. forces
+            # read per group: the reserved registers between groups answer IllegalAddress
+            blocks = {addr: self.read(addr, 6) for addr in (POS_ADDR, ANGLE_ADDR, FORCE_ADDR)}
             tactile = self.read_tactile() if self.tactile_model is not None else None
             self.failures = 0
         except RuntimeError as exc:
@@ -201,7 +202,7 @@ class RealBackend(Node):
             return
 
         def reg(addr, finger):
-            return block[addr - POS_ADDR + FIRMWARE_INDEX[finger]]
+            return blocks[addr][FIRMWARE_INDEX[finger]]
 
         stamp = self.get_clock().now().to_msg()
         fw_angle = [math.radians(to_int16(reg(ANGLE_ADDR, f)) / 100.0) for f in FINGERS]

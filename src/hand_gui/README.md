@@ -31,7 +31,7 @@ ros2 run hand_gui hand_gui --ros-args -p data_dir:=~/tactile_dataset -p test_obj
 | `data_dir` | `~/tactile_dataset` | 에피소드 저장 폴더 (화면에서도 변경 가능) |
 | `test_object` | `none` | `ball`: 시뮬레이션의 테스트 공을 로봇 손 화면에도 표시 |
 | `hand_xml` | `''` | AP002 MJCF 경로 (비우면 `external/rohand_mujoco/...`) |
-| `robot_camera_topic` | `/gripper_camera/color/image_raw` | 로봇 핸드 카메라 영상 (`sensor_msgs/Image`, rgb8/bgr8/mono8) |
+| `robot_camera_topic` | `/gripper_camera/color/image_raw` | 로봇 핸드 카메라 영상 (`sensor_msgs/Image`, rgb8/bgr8/mono8). 시뮬레이션은 가상 카메라, 실물은 RealSense D415 ([실행 방법](../../README.md#실물-로봇-핸드--그리퍼-카메라-실행-wsl)) |
 | `webcam_topic` | `/webcam/image_annotated/compressed` | 웹캠 영상 (`sensor_msgs/CompressedImage`) |
 | `webcam_source` | `none` | 시작할 때 선택할 카메라: `none`, `network`, `/dev/videoN` (`hand_bringup`이 자동으로 지정) |
 
