@@ -7,10 +7,14 @@ Pose source (same rule as gripper_camera):
 render() returns the image and, per tactile region, where to draw its force on that image.
 The image is turned 90 deg counter-clockwise (palm facing the viewer, thumb up, fingers left):
 MuJoCo renders a portrait frame that is rotated, and overlay points / mouse drags are mapped.
-The GUI draws the forces in 2D on top (never hidden by the fingers or the object):
-  circle : normal force, size and colour relative to the auto-scaled maximum
-  arrow  : shear force, length = tangential, direction = reported angle in the region frame
-           (sim: fingertip link x/y axes; real force3d: sensor x/y axes, mapping not verified)
+The GUI draws the forces in 2D on top (never hidden by the fingers or the object), following
+the ROH-AP002 sensor layout (manual 7.4):
+  fingertip (5)          : circle = normal force, arrow = shear force (length = tangential,
+                           direction = reported angle in the fingertip link frame; for the real
+                           force3d sensor the axis mapping is not verified)
+  proximal phalanx (3)   : circle = normal force (index, middle, ring)
+  palm (11 x 5)          : one dot per taxel on the palm (PalmGrid), colour = pressure
+Sizes and colours are relative to an auto-scaled maximum per value kind.
 """
 import math
 import time
@@ -18,12 +22,17 @@ import time
 import mujoco
 import numpy as np
 
-from finger_node.common import TACTILE_REGIONS, default_model_xml
-from finger_node.sim_backend import ACTUATORS, BODY_PREFIX_REGION, disable_gravity, load_model
+from finger_node.common import PALM_DEAD_CELLS, PROXIMAL_FINGERS, TACTILE_REGIONS, default_model_xml
+from finger_node.sim_backend import (
+    ACTUATORS, BODY_PREFIX_REGION, SEGMENT_PROXIMAL, SEGMENT_TIP, PalmGrid, disable_gravity,
+    load_model, sensor_of_body,
+)
 
 FOLLOW_TIMEOUT = 0.5   # s; full joint states older than this fall back to /hand_hw/state
 ARROW_LENGTH = 0.04    # m at full-scale shear
-SCALE_FLOOR = {'force3d': 0.2, 'dot_matrix': 50.0}  # smallest full-scale value per tactile kind
+# smallest full-scale value per tactile kind (N for force3d / normal, raw 0..255 for dot_matrix)
+SCALE_FLOOR = {'force3d': 0.2, 'normal': 0.2, 'dot_matrix': 50.0}
+PALM_SCALE_FLOOR = {'normal': 0.05, 'dot_matrix': 30.0}  # per taxel
 SCALE_DECAY = 0.995    # per render: the auto scale slowly shrinks back after a peak
 OBJECT_ALPHA = 0.45    # test object drawn see-through so the fingertips stay visible
 
@@ -48,24 +57,28 @@ class HandView:
                           for j in range(self.model.njnt) if self.model.joint(j).name}
         self.actuator_id = {f: self.model.actuator(name).id for f, name in ACTUATORS.items()}
 
-        # region -> frame body (fingertip distal link / palm base) and the geoms marking its pad
-        self.region_body = {}
+        # sensor -> link carrying it (fingertip: distal link, also the shear frame; proximal link)
+        self.sensor_body = {}
         hand_bodies = []
         for b in range(self.model.nbody):
             name = self.model.body(b).name
-            for prefix, region in BODY_PREFIX_REGION:
-                if name.startswith(prefix):
-                    hand_bodies.append(b)
-                    if region not in self.region_body or 'distal' in name:
-                        self.region_body[region] = b
-        self.region_geoms = {r: [g for g in range(self.model.ngeom) if self.model.geom_bodyid[g] == b]
-                             for r, b in self.region_body.items()}
+            if any(name.startswith(prefix) for prefix, _ in BODY_PREFIX_REGION):
+                hand_bodies.append(b)
+            found = sensor_of_body(name)
+            if found is not None and found[1] == SEGMENT_TIP:
+                self.sensor_body[found[0]] = b
+            elif found is not None and found[1] == SEGMENT_PROXIMAL:
+                self.sensor_body[f'{found[0]}_proximal'] = b
+        self.sensor_geoms = {s: [g for g in range(self.model.ngeom) if self.model.geom_bodyid[g] == b]
+                             for s, b in self.sensor_body.items()}
+        self.palm = PalmGrid(self.model, self.data)  # palm is fixed: taxel positions never change
 
         self.camera = mujoco.MjvCamera()
         self.camera.type = mujoco.mjtCamera.mjCAMERA_FREE
         self.home = self.data.xpos[hand_bodies].mean(axis=0)
         self.reset_camera()
         self.scale = dict(SCALE_FLOOR)
+        self.palm_scale = dict(PALM_SCALE_FLOOR)
 
     def reset_camera(self):
         self.camera.lookat[:] = self.home
@@ -126,33 +139,58 @@ class HandView:
                     (cam.frustum_top - y) / (cam.frustum_top - cam.frustum_bottom) * self.height)
         return project
 
+    def sensor_point(self, sensor):
+        geoms = self.sensor_geoms[sensor]
+        body = self.sensor_body[sensor]
+        return self.data.geom_xpos[geoms].mean(axis=0) if geoms else self.data.xpos[body]
+
     def overlays(self, tactile):
-        """Per region: dict(region, u, v, fraction, arrow=(u, v) or None, normal, tangential)."""
-        for kind in self.scale:
-            self.scale[kind] = max(SCALE_FLOOR[kind], self.scale[kind] * SCALE_DECAY)
+        """List of dicts to draw:
+        type 'point': fingertip / proximal circle (sensor, u, v, fraction, normal, arrow (u, v) or None)
+        type 'cell' : palm taxel dot (u, v, fraction or None when no value)
+        """
+        for scales, floors in ((self.scale, SCALE_FLOOR), (self.palm_scale, PALM_SCALE_FLOOR)):
+            for kind in scales:
+                scales[kind] = max(floors[kind], scales[kind] * SCALE_DECAY)
         project = self.projector()
         items = []
-        for region in TACTILE_REGIONS:
-            entry = tactile[region]
-            if region not in self.region_body or not np.isfinite(entry['normal']):
+
+        palm = tactile['palm']
+        values = palm['raw'] if palm['raw'] is not None and palm['raw'].size >= len(self.palm.points) else None
+        kind = palm['kind'] if palm['kind'] in self.palm_scale else 'dot_matrix'
+        if values is not None and np.isfinite(values).any():
+            self.palm_scale[kind] = max(self.palm_scale[kind], float(np.nanmax(values)))
+        for k, point in enumerate(self.palm.points):
+            if k in PALM_DEAD_CELLS:
+                continue
+            uv = project(point)
+            if uv is None:
+                continue
+            value = values[k] if values is not None else np.nan
+            fraction = min(value / self.palm_scale[kind], 1.0) if np.isfinite(value) else None
+            items.append(dict(type='cell', u=uv[0], v=uv[1], fraction=fraction))
+
+        sensors = [r for r in TACTILE_REGIONS if r != 'palm'] + [f'{f}_proximal' for f in PROXIMAL_FINGERS]
+        for sensor in sensors:
+            entry = tactile[sensor]
+            if sensor not in self.sensor_body or not np.isfinite(entry['normal']):
                 continue
             kind = entry['kind'] if entry['kind'] in self.scale else 'force3d'
             shear = entry['tangential'] if np.isfinite(entry['tangential']) else 0.0
             self.scale[kind] = max(self.scale[kind], entry['normal'], shear)
-            geoms = self.region_geoms[region]
-            point = self.data.geom_xpos[geoms].mean(axis=0) if geoms else self.data.xpos[self.region_body[region]]
+            point = self.sensor_point(sensor)
             uv = project(point)
             if uv is None:
                 continue
             arrow = None
             if shear > 0:
-                rot = self.data.xmat[self.region_body[region]].reshape(3, 3)
+                rot = self.data.xmat[self.sensor_body[sensor]].reshape(3, 3)
                 angle = math.radians(entry['direction'])
                 direction = rot @ np.array([math.cos(angle), math.sin(angle), 0.0])
                 arrow = project(point + direction * ARROW_LENGTH * min(shear / self.scale[kind], 1.0))
-            items.append(dict(region=region, u=uv[0], v=uv[1], arrow=arrow,
+            items.append(dict(type='point', sensor=sensor, u=uv[0], v=uv[1], arrow=arrow,
                               fraction=min(entry['normal'] / self.scale[kind], 1.0),
-                              normal=entry['normal'], tangential=entry['tangential']))
+                              normal=entry['normal']))
         return items
 
     def turn(self, u, v):
@@ -166,7 +204,7 @@ class HandView:
         items = self.overlays(tactile)
         for item in items:
             item['u'], item['v'] = self.turn(item['u'], item['v'])
-            if item['arrow'] is not None:
+            if item.get('arrow') is not None:
                 item['arrow'] = self.turn(*item['arrow'])
         return image, items
 

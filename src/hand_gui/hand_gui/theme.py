@@ -22,6 +22,8 @@ QPushButton:hover {{ border-color: {ACCENT}; }}
 QPushButton:disabled {{ color: #5f6368; }}
 QPushButton#record {{ font-size: 12pt; font-weight: bold; padding: 12px; }}
 QPushButton#record:checked {{ background: {RECORD}; border-color: {RECORD}; color: white; }}
+QPushButton#stop {{ background: {RECORD}; border-color: {RECORD}; color: white; font-size: 12pt; font-weight: bold; padding: 10px; }}
+QPushButton#start {{ background: #1f8a5b; border-color: #1f8a5b; color: white; font-size: 12pt; font-weight: bold; padding: 10px; }}
 QLineEdit, QComboBox, QPlainTextEdit, QListWidget {{ background: {INPUT}; color: {TEXT}; border: 1px solid {BORDER}; border-radius: 5px; padding: 4px; }}
 QLabel#heading {{ color: {TEXT}; font-weight: bold; font-size: 11pt; }}
 QLabel#muted {{ color: {MUTED}; }}

@@ -2,8 +2,10 @@
 
 <root>/episode_000001/
   data.csv          one row per frame: time, command / angle / velocity / force per finger,
-                    tactile normal / tangential / direction per region, human hand landmarks
-  tactile_raw.npz   raw tactile arrays per region, shape [frames, values] (NaN = no data)
+                    tactile normal / tangential / direction per sensor (fingertips, palm total,
+                    proximal phalanx of index / middle / ring), human hand landmarks
+  tactile_raw.npz   raw tactile arrays per sensor, shape [frames, values] (NaN = no data);
+                    'palm' is [frames, 55] = the 11 x 5 grid, index = column * 5 + row
   webcam.mp4        annotated webcam frames (if received)
   robot_camera.mp4  robot hand camera frames (if received)
   meta.json         task, notes, fps, units, finger / region order, tactile kinds, files
@@ -20,19 +22,20 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from finger_node.common import FINGERS, TACTILE_REGIONS
+from finger_node.common import FINGERS, PALM_DEAD_CELLS, PALM_GRID, PROXIMAL_FINGERS, TACTILE_REGIONS
 
 FORMAT_VERSION = 1
 STALE_AFTER = 0.5  # s
 NAN = float('nan')
 LANDMARK_COUNT = 21
+SENSORS = TACTILE_REGIONS + tuple(f'{f}_proximal' for f in PROXIMAL_FINGERS)
 
 
 def header():
     columns = ['frame', 'time_s', 'unix_time']
     for f in FINGERS:
         columns += [f'{f}.command_rad', f'{f}.angle_rad', f'{f}.velocity_rad_s', f'{f}.force_n']
-    for r in TACTILE_REGIONS:
+    for r in SENSORS:
         columns += [f'{r}.tactile_normal', f'{r}.tactile_tangential', f'{r}.tactile_direction_deg']
     for i in range(LANDMARK_COUNT):
         columns += [f'landmark{i}.{axis}' for axis in 'xyz']
@@ -70,7 +73,7 @@ class Recorder:
         self.csv_file = open(self.folder / 'data.csv', 'w', newline='')
         self.csv = csv.writer(self.csv_file)
         self.csv.writerow(header())
-        self.raw = {r: [] for r in TACTILE_REGIONS}
+        self.raw = {r: [] for r in SENSORS}
         self.kinds = {}
         self.videos = {}
         self.video_size = {}
@@ -105,7 +108,7 @@ class Recorder:
             e = snap['fingers'][f]
             row += [e['command']] + [fresh(e[k], e['stamp'], now)
                                      for k in ('angle', 'velocity', 'effort')]
-        for r in TACTILE_REGIONS:
+        for r in SENSORS:
             e = snap['tactile'][r]
             row += [fresh(e[k], e['stamp'], now) for k in ('normal', 'tangential', 'direction')]
             raw = e['raw'] if e['raw'] is not None and now - e['stamp'] <= STALE_AFTER else None
@@ -154,13 +157,17 @@ class Recorder:
             duration_s=round(time.monotonic() - self.started, 3),
             measured_fps=round(self.frames / max(time.monotonic() - self.started, 1e-6), 2),
             fingers=list(FINGERS),
-            tactile_regions=list(TACTILE_REGIONS),
+            tactile_sensors=list(SENSORS),
             tactile_kinds=self.kinds,
+            palm_grid=dict(columns=PALM_GRID[0], rows=PALM_GRID[1], dead_cells=list(PALM_DEAD_CELLS),
+                           index='column * rows + row; column 0 = index-finger side, '
+                                 'row 0 = wrist side'),
             units=dict(
                 angle='rad (0 = open)', velocity='rad/s', force='N (actuator)',
-                tactile_force3d='sensor units: sum of normal, vector-summed shear, direction deg '
-                                'in the sensor / fingertip frame (simulation: N)',
-                tactile_dot_matrix='sum of taxels 0..255',
+                tactile_force3d='fingertip: normal N, tangential N, direction deg in the fingertip '
+                                'frame (ROH-AP002 3D force sensor, register mN / 1000)',
+                tactile_normal='normal force N (proximal phalanx; simulated palm cells)',
+                tactile_dot_matrix='real palm: sum of taxels 0..255 (raw per taxel in tactile_raw.npz)',
                 landmarks='MediaPipe world landmarks, m',
             ),
             stale_after_s=STALE_AFTER,

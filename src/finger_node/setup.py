@@ -23,6 +23,8 @@ setup(
             # 하드웨어 백엔드: 손가락 노드 6개가 공유 (MuJoCo 또는 실물 시리얼 포트를 단독 소유)
             'hand_sim = finger_node.sim_backend:main',
             'hand_serial = finger_node.real_backend:main',
+            # read-only check of the real hand's tactile registers
+            'tactile_probe = finger_node.tactile_probe:main',
         ],
     },
 )
