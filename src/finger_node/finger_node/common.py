@@ -41,6 +41,9 @@ def finger_tactile_topic(finger):
 # ---- hardware backend topics (finger nodes <-> hand_sim / hand_serial) --------
 HW_STATE_TOPIC = '/hand_hw/state'                 # sensor_msgs/JointState, FINGERS order
 SIM_FULL_STATE_TOPIC = '/hand_sim/full_joint_states'  # sensor_msgs/JointState, all MuJoCo joints
+# STOP / START (GUI): False = hold the current pose and ignore targets, True = follow targets
+HW_MOTION_ENABLE_TOPIC = '/hand_hw/motion_enable'  # std_msgs/Bool, command
+HW_MOTION_STATE_TOPIC = '/hand_hw/motion_state'    # std_msgs/String: running | stopped | read_only
 
 
 def hw_target_topic(finger):
@@ -48,23 +51,59 @@ def hw_target_topic(finger):
 
 
 def hw_tactile_topic(region):
-    return f'/hand_hw/tactile/{region}'           # std_msgs/Float32MultiArray
+    return f'/hand_hw/tactile/{region}'           # std_msgs/Float32MultiArray: fingertip / palm
 
 
-# ---- tactile layout -----------------------------------------------------------
+def hw_tactile_proximal_topic(finger):
+    return f'/hand_hw/tactile_proximal/{finger}'  # std_msgs/Float32MultiArray: proximal phalanx
+
+
+def finger_tactile_proximal_topic(finger):
+    return f'/finger/{finger}/tactile_proximal'   # std_msgs/Float32MultiArray: proximal phalanx
+
+
+# ---- tactile layout (ROH-AP002 manual 7.4, checked on the real hand) -------------
+# fingertip (distal phalanx), all 5 fingers : 3D force  -> /…/tactile/<finger>
+# proximal phalanx, index / middle / ring   : normal    -> /…/tactile_proximal/<finger>
+# palm                                      : 11 x 5 dot matrix -> /…/tactile/palm
+#
 # Float32MultiArray.layout.dim[0].label tells the format of data[]:
-#   'force3d'    : [normal, tangential, direction_deg] * points (real 3D sensor, MuJoCo sim)
-#   'dot_matrix' : taxel values 0..255 (real dot-matrix sensor, palm)
+#   'force3d'    : [normal N, tangential N, direction_deg]  (one fingertip point)
+#   'normal'     : normal force N per point (proximal phalanx; simulated palm cells)
+#   'dot_matrix' : raw taxel values 0..255 (real palm; fingers of the dot-matrix hand model)
+# Palm messages have two dims: [PALM_GRID[0] columns, PALM_GRID[1] rows], data index
+# = column * 5 + row. Columns run from the index-finger side to the little-finger side, rows
+# from the wrist side to the finger side. PALM_DEAD_CELLS have no taxel (NaN).
+# Invalid / missing values are NaN.
 TACTILE_FORCE3D = 'force3d'
+TACTILE_NORMAL = 'normal'
 TACTILE_DOT_MATRIX = 'dot_matrix'
+PROXIMAL_FINGERS = ('index', 'middle', 'ring')
+PALM_GRID = (11, 5)
+PALM_DEAD_CELLS = (0, 1, 5, 6, 10)  # thenar corner (right hand), always 0 on the real hand
 
 
-def make_tactile_msg(kind, values):
+def make_tactile_msg(kind, values, grid=None):
+    """grid=(columns, rows) adds a second layout dimension (palm)."""
     from std_msgs.msg import Float32MultiArray, MultiArrayDimension
     msg = Float32MultiArray()
-    msg.layout.dim = [MultiArrayDimension(label=kind, size=len(values), stride=len(values))]
+    if grid is None:
+        msg.layout.dim = [MultiArrayDimension(label=kind, size=len(values), stride=len(values))]
+    else:
+        columns, rows = grid
+        msg.layout.dim = [MultiArrayDimension(label=kind, size=columns, stride=columns * rows),
+                          MultiArrayDimension(label='rows', size=rows, stride=rows)]
     msg.data = [float(v) for v in values]
     return msg
+
+
+def palm_values(values):
+    """First 55 values with the dead cells set to NaN."""
+    cells = [float(v) for v in list(values)[:PALM_GRID[0] * PALM_GRID[1]]]
+    cells += [float('nan')] * (PALM_GRID[0] * PALM_GRID[1] - len(cells))
+    for k in PALM_DEAD_CELLS:
+        cells[k] = float('nan')
+    return cells
 
 
 MODEL_RELATIVE_PATH = 'external/rohand_mujoco/AP002/model/rohand_gen2_AP002_right.xml'

@@ -15,14 +15,14 @@ import cv2
 import numpy as np
 import pyqtgraph as pg
 from PyQt5.QtCore import QPointF, Qt, QTimer
-from PyQt5.QtGui import QColor, QFont, QImage, QPainter, QPen, QPixmap, QPolygonF
+from PyQt5.QtGui import QColor, QFont, QImage, QKeySequence, QPainter, QPen, QPixmap, QPolygonF
 from PyQt5.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QHBoxLayout,
-    QLabel, QLineEdit, QListWidget, QMainWindow, QMessageBox, QPushButton, QSplitter, QTabWidget,
-    QVBoxLayout, QWidget,
+    QLabel, QLineEdit, QListWidget, QMainWindow, QMessageBox, QPushButton, QShortcut, QSplitter,
+    QTabWidget, QVBoxLayout, QWidget,
 )
 
-from finger_node.common import FINGERS, TACTILE_REGIONS
+from finger_node.common import FINGERS, PROXIMAL_FINGERS, TACTILE_REGIONS
 from hand_gui.hand_view import HandView
 from hand_gui.recorder import Recorder
 from hand_gui import theme
@@ -37,6 +37,9 @@ COLORS = {'index': '#1f77b4', 'middle': '#ff7f0e', 'ring': '#2ca02c', 'little': 
           'thumb': '#9467bd', 'thumb_root': '#8c564b', 'palm': '#7f7f7f'}
 NAMES_KO = {'index': '검지', 'middle': '중지', 'ring': '약지', 'little': '소지',
             'thumb': '엄지', 'thumb_root': '엄지 회전', 'palm': '손바닥'}
+for _f in PROXIMAL_FINGERS:  # proximal phalanx: same colour as its finger, dashed line
+    COLORS[f'{_f}_proximal'] = COLORS[_f]
+    NAMES_KO[f'{_f}_proximal'] = f'{NAMES_KO[_f]} 안쪽'
 
 
 def heat_color(fraction):
@@ -130,15 +133,34 @@ class HandPanel(ImagePanel):
         self.hand_view.zoom(event.angleDelta().y() / 120.0)
 
     def show_frame(self, rgb, items):
-        """Hand image with forces drawn on top: circle = normal, arrow = shear."""
+        """Hand image with forces drawn on top: palm taxel dots, then fingertip / proximal
+        circles (normal force) with shear arrows on the fingertips."""
         pixmap = to_pixmap(rgb)
         painter = QPainter(pixmap)
         painter.setRenderHint(QPainter.Antialiasing)
         painter.setFont(QFont(painter.font().family(), 9, QFont.Bold))
         for item in items:
+            if item['type'] != 'cell':
+                continue
+            center = QPointF(item['u'], item['v'])
+            if item['fraction'] is None:  # no palm data
+                painter.setPen(QPen(QColor(120, 120, 120), 1))
+                painter.setBrush(Qt.NoBrush)
+            else:
+                painter.setPen(Qt.NoPen)
+                fill = heat_color(item['fraction'])
+                fill.setAlpha(80 + int(175 * item['fraction']))
+                painter.setBrush(fill)
+            painter.drawEllipse(center, 3.2, 3.2)
+        for item in items:
+            if item['type'] != 'point':
+                continue
             center = QPointF(item['u'], item['v'])
             color = heat_color(item['fraction'])
             radius = 5 + 16 * item['fraction']
+            proximal = item['sensor'].endswith('_proximal')
+            if proximal:
+                radius *= 0.8
             painter.setPen(QPen(QColor(20, 20, 20), 1.5))
             fill = QColor(color)
             fill.setAlpha(190)
@@ -148,8 +170,8 @@ class HandPanel(ImagePanel):
                 painter.setPen(QPen(QColor(30, 120, 255), 3))
                 painter.setBrush(QColor(30, 120, 255))
                 draw_arrow(painter, center, QPointF(*item['arrow']))
-            label = f"{NAMES_KO[item['region']]} {item['normal']:.2f}"
-            painter.setPen(QColor(255, 255, 255))
+            label = f"{item['normal']:.2f}" if proximal else f"{NAMES_KO[item['sensor']]} {item['normal']:.2f}"
+            painter.setPen(QColor(200, 200, 200) if proximal else QColor(255, 255, 255))
             painter.drawText(QPointF(item['u'] + radius + 3, item['v'] - 3), label)
         painter.end()
         self.set_pixmap(pixmap)
@@ -167,7 +189,9 @@ class ForcePlot(pg.PlotWidget):
         legend = self.addLegend(offset=(5, 2), labelTextSize='8pt', colCount=3)  # compact
         legend.setBrush(pg.mkBrush(27, 28, 31, 200))
         legend.setLabelTextColor(theme.TEXT)
-        self.curves = {n: self.plot([], [], pen=pg.mkPen(COLORS[n], width=2), name=NAMES_KO[n])
+        self.curves = {n: self.plot([], [], name=NAMES_KO[n],
+                                    pen=pg.mkPen(COLORS[n], width=2,
+                                                 style=Qt.DashLine if n.endswith('_proximal') else Qt.SolidLine))
                        for n in names}
 
     def update_curves(self, times, series):
@@ -215,7 +239,7 @@ class MainWindow(QMainWindow):
         # turned like the hand view, which makes it portrait: fill the panel, crop top/bottom
         self.robot_cam_panel = ImagePanel('로봇 핸드 카메라',
                                           f'로봇 카메라 영상 없음\n({bridge.robot_camera_topic})',
-                                          fill=True)
+                                          fill=bridge.robot_camera_rotation in (90, 270))
 
         cameras = QSplitter(Qt.Vertical)
         cameras.addWidget(self.webcam_panel)
@@ -228,8 +252,10 @@ class MainWindow(QMainWindow):
 
         self.plots = {
             'effort': ForcePlot('액추에이터 힘', 'N', FINGERS),
-            'normal': ForcePlot('촉각 — 누르는 힘 (법선)', '센서 값', TACTILE_REGIONS),
-            'tangential': ForcePlot('촉각 — 미끄러지는 힘 (전단)', '센서 값', TACTILE_REGIONS[:5]),
+            # palm is shown as the 11 x 5 grid on the hand (its real unit is raw 0..255, not N)
+            'normal': ForcePlot('촉각 — 누르는 힘 (손끝, 점선 = 안쪽 마디)', 'N',
+                                TACTILE_REGIONS[:5] + tuple(f'{f}_proximal' for f in PROXIMAL_FINGERS)),
+            'tangential': ForcePlot('촉각 — 미끄러지는 힘 (손끝)', 'N', TACTILE_REGIONS[:5]),
         }
         plots = QWidget()
         plot_row = QHBoxLayout(plots)
@@ -274,12 +300,57 @@ class MainWindow(QMainWindow):
     # ---- left side: data saving tabs -------------------------------------------
     def build_sidebar(self):
         tabs = QTabWidget()
-        tabs.setMinimumWidth(260)
         tabs.tabBar().setExpanding(True)
         tabs.addTab(self.build_record_tab(), '녹화')
         tabs.addTab(self.build_upload_tab(), '업로드')
         tabs.addTab(self.build_settings_tab(), '보정')
-        return tabs
+        side = QWidget()
+        side.setMinimumWidth(260)
+        layout = QVBoxLayout(side)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self.build_motion_controls())
+        layout.addWidget(tabs, 1)
+        return side
+
+    def build_motion_controls(self):
+        """STOP / START of the robot hand, always visible above the tabs (Esc = STOP)."""
+        self.stop_button = QPushButton('■ STOP')
+        self.stop_button.setObjectName('stop')
+        self.stop_button.clicked.connect(self.stop_robot)
+        self.start_button = QPushButton('▶ START')
+        self.start_button.setObjectName('start')
+        self.start_button.clicked.connect(self.start_robot)
+        self.motion_label = self.muted('로봇: 연결 없음')
+        QShortcut(QKeySequence(Qt.Key_Escape), self, activated=self.stop_robot)
+        box = QWidget()
+        layout = QVBoxLayout(box)
+        layout.setContentsMargins(6, 6, 6, 2)
+        row = QHBoxLayout()
+        row.addWidget(self.stop_button, 1)
+        row.addWidget(self.start_button, 1)
+        layout.addLayout(row)
+        layout.addWidget(self.motion_label)
+        return box
+
+    def stop_robot(self):
+        self.bridge.set_motion(False)
+        self.status.showMessage('STOP: 로봇 손이 현재 자세를 유지합니다 (START로 다시 따라감)', 8000)
+
+    def start_robot(self):
+        self.bridge.set_motion(True)
+        self.status.showMessage('START: 로봇 손이 다시 명령을 따라갑니다', 5000)
+
+    def show_motion_state(self, snap):
+        state, stamp = snap['motion_state']
+        if state is None or snap['time'] - stamp > 2.0:
+            text, color = '로봇: 연결 없음', theme.MUTED
+        else:
+            text, color = {'running': ('로봇: ● 동작 중', '#3ecf8e'),
+                           'stopped': ('로봇: ■ 정지됨 (START로 재개)', theme.RECORD),
+                           'read_only': ('로봇: 읽기 전용 (enable_motion:=false)', theme.MUTED)}.get(
+                               state, (f'로봇: {state}', theme.MUTED))
+        self.motion_label.setText(text)
+        self.motion_label.setStyleSheet(f'color:{color}; font-weight:bold;')
 
     @staticmethod
     def heading(text):
@@ -490,12 +561,14 @@ class MainWindow(QMainWindow):
         self.tick_count += 1
         self.webcam_panel.show_rgb(None if webcam_bgr is None else webcam_bgr[:, :, ::-1])
         # shown turned 90 deg counter-clockwise like the hand view (thumb up); recorded as captured
-        self.robot_cam_panel.show_rgb(None if robot_rgb is None else np.rot90(robot_rgb, 1))
+        turns = self.bridge.robot_camera_rotation // 90
+        self.robot_cam_panel.show_rgb(None if robot_rgb is None else np.rot90(robot_rgb, turns))
         self.hand_view.update_pose(snap)
         self.hand_panel.show_frame(*self.hand_view.render(snap['tactile']))
         for key, plot in self.plots.items():
             plot.update_curves(times, series[key])
         self.update_status(snap, webcam_bgr is not None, robot_rgb is not None)
+        self.show_motion_state(snap)
 
     def append_history(self, snap):
         now = snap['time']
@@ -517,7 +590,7 @@ class MainWindow(QMainWindow):
             self.record_label.setText(f'녹화 {elapsed:5.1f}s · {self.recorder.frames} 프레임')
         if not self.recorder.active and self.tick_count % 8 == 0:
             self.status.showMessage(
-                f'손가락 {fingers}/{len(FINGERS)} · 촉각 {tactile}/{len(TACTILE_REGIONS)} · '
+                f'손가락 {fingers}/{len(FINGERS)} · 촉각 {tactile}/{len(snap["tactile"])} · '
                 f'웹캠 {"✓" if webcam_ok else "✗"} · 로봇 카메라 {"✓" if robot_ok else "✗"} · '
                 f'{time.strftime("%H:%M:%S")}')
 

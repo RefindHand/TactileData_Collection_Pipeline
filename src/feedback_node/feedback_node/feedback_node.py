@@ -4,21 +4,24 @@
   sub  <prefix>/<finger>/state      sensor_msgs/JointState      angle (rad), velocity, actuator effort
   sub  <prefix>/<finger>/command    std_msgs/Float64            target angle (rad), for tracking error
   sub  <prefix>/<finger>/tactile    std_msgs/Float32MultiArray  fingertip tactile (no thumb_root)
-  sub  <palm_tactile_topic>         std_msgs/Float32MultiArray  palm tactile
+  sub  <prefix>/<f>/tactile_proximal std_msgs/Float32MultiArray proximal phalanx (index/middle/ring)
+  sub  <palm_tactile_topic>         std_msgs/Float32MultiArray  palm tactile (11 x 5)
   (prefix = parameter finger_topic_prefix, default /finger)
 
   pub  /feedback/joint_states       sensor_msgs/JointState      6 fingers in one stamped snapshot
   pub  /feedback/tracking_error     std_msgs/Float64MultiArray  command - measured angle (rad)
-  pub  /feedback/tactile_summary    std_msgs/Float64MultiArray  pressure total per region
-                                    [thumb, index, middle, ring, little, palm]
-  pub  /feedback/contact            std_msgs/UInt8MultiArray    1 = region in contact
+  pub  /feedback/tactile_summary    std_msgs/Float64MultiArray  pressure total per sensor (SENSORS):
+                                    [thumb, index, middle, ring, little, palm,
+                                     index_proximal, middle_proximal, ring_proximal]
+  pub  /feedback/contact            std_msgs/UInt8MultiArray    1 = sensor in contact (same order)
   pub  /feedback/diagnostics        diagnostic_msgs/DiagnosticArray  per-finger / per-region health
 
 Missing values are NaN. A source is 'stale' if nothing arrived for stale_timeout seconds.
 
-Tactile Float32MultiArray: layout.dim[0].label gives the data format
-  'force3d'    : [normal, tangential, direction_deg] repeated per sensing point
-  'dot_matrix' : taxel values 0..255 (default when no label)
+Tactile Float32MultiArray: layout.dim[0].label gives the data format (NaN = no value)
+  'force3d'    : [normal N, tangential N, direction_deg] (fingertip)
+  'normal'     : normal force N per point (proximal phalanx, simulated palm)
+  'dot_matrix' : taxel values 0..255 (real palm; default when no label)
 """
 import math
 import time
@@ -34,7 +37,11 @@ from std_msgs.msg import Float32MultiArray, Float64, Float64MultiArray, UInt8Mul
 FINGERS = ('index', 'middle', 'ring', 'little', 'thumb_root', 'thumb')
 # ROH Gen2 firmware tactile order (thumb first) plus palm; thumb_root has no tactile pad
 TACTILE_REGIONS = ('thumb', 'index', 'middle', 'ring', 'little', 'palm')
+# proximal phalanx sensors (ROH-AP002: index, middle, ring), appended after the regions
+PROXIMAL_FINGERS = ('index', 'middle', 'ring')
+SENSORS = TACTILE_REGIONS + tuple(f'{f}_proximal' for f in PROXIMAL_FINGERS)
 TACTILE_FORCE3D = 'force3d'
+TACTILE_NORMAL = 'normal'
 TACTILE_DOT_MATRIX = 'dot_matrix'
 NAN = float('nan')
 
@@ -45,9 +52,8 @@ def tactile_kind(msg):
 
 def tactile_total(kind, data):
     """Scalar 'how hard is this region pressed' used for contact detection."""
-    if kind == TACTILE_FORCE3D:
-        return float(sum(v for v in data[0::3] if v >= 0))
-    return float(sum(v for v in data if v >= 0))
+    values = data[0::3] if kind == TACTILE_FORCE3D else data
+    return float(sum(v for v in values if math.isfinite(v) and v >= 0))
 
 
 class Sample:
@@ -73,6 +79,7 @@ class FeedbackNode(Node):
         self.stale_timeout = float(p('stale_timeout', 0.5).value)
         self.contact_threshold = {
             TACTILE_FORCE3D: float(p('contact_threshold_force3d', 0.5).value),
+            TACTILE_NORMAL: float(p('contact_threshold_normal', 0.5).value),
             TACTILE_DOT_MATRIX: float(p('contact_threshold_dot_matrix', 50.0).value),
         }
         prefix = p('finger_topic_prefix', '/finger').value.rstrip('/')
@@ -80,15 +87,20 @@ class FeedbackNode(Node):
 
         self.state = {f: Sample() for f in FINGERS}
         self.command = {f: Sample() for f in FINGERS}
-        self.tactile = {r: Sample() for r in TACTILE_REGIONS}
+        self.tactile = {r: Sample() for r in SENSORS}
 
         for f in FINGERS:
             self.create_subscription(JointState, f'{prefix}/{f}/state',
                                      lambda m, f=f: self.on_state(f, m), 10)
             self.create_subscription(Float64, f'{prefix}/{f}/command',
                                      lambda m, f=f: self.command[f].set(m.data), 10)
-        for r in TACTILE_REGIONS:
-            topic = palm_topic if r == 'palm' else f'{prefix}/{r}/tactile'
+        for r in SENSORS:
+            if r == 'palm':
+                topic = palm_topic
+            elif r.endswith('_proximal'):
+                topic = f"{prefix}/{r[:-len('_proximal')]}/tactile_proximal"
+            else:
+                topic = f'{prefix}/{r}/tactile'
             self.create_subscription(Float32MultiArray, topic,
                                      lambda m, r=r: self.on_tactile(r, m), 10)
 
@@ -151,9 +163,9 @@ class FeedbackNode(Node):
             joints.effort.append(eff)
         self.pub_joints.publish(joints)
         self.pub_error.publish(Float64MultiArray(data=[self.tracking_error(f) for f in FINGERS]))
-        self.pub_tactile.publish(Float64MultiArray(data=[self.pressure(r) for r in TACTILE_REGIONS]))
+        self.pub_tactile.publish(Float64MultiArray(data=[self.pressure(r) for r in SENSORS]))
         self.pub_contact.publish(UInt8MultiArray(
-            data=[int(self.in_contact(r)) for r in TACTILE_REGIONS]))
+            data=[int(self.in_contact(r)) for r in SENSORS]))
 
     def status_for(self, sample, name, hardware_id):
         st = DiagnosticStatus(name=name, hardware_id=hardware_id)
@@ -179,7 +191,7 @@ class FeedbackNode(Node):
             array.status.append(st)
             lines.append(f'{f:10} angle={math.degrees(angle):7.2f}deg '
                          f'err={math.degrees(err):7.2f}deg effort={effort:7.3f} [{st.message}]')
-        for r in TACTILE_REGIONS:
+        for r in SENSORS:
             st = self.status_for(self.tactile[r], f'feedback/tactile/{r}', r)
             if self.tactile[r].value is not None:
                 kind, total, size = self.tactile[r].value
@@ -190,7 +202,7 @@ class FeedbackNode(Node):
         self.pub_diag.publish(array)
         lines.append('tactile ' + ' '.join(
             f"{r}={self.pressure(r):.2f}{'*' if self.in_contact(r) else ''}"
-            for r in TACTILE_REGIONS))
+            for r in SENSORS))
         self.get_logger().info('\n' + '\n'.join(lines))
 
 

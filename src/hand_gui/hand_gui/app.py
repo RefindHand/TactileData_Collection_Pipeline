@@ -5,7 +5,7 @@
   ros2 run hand_gui hand_gui --ros-args -p data_dir:=~/tactile_dataset -p test_object:=ball
 
 Parameters: data_dir (episode folder root), test_object (none | ball: match hand_sim to see
-the ball), hand_xml, robot_camera_topic, webcam_topic.
+the ball), hand_xml, robot_camera_topic, robot_camera_rotation (display, CCW deg), webcam_topic.
 """
 import os
 import signal

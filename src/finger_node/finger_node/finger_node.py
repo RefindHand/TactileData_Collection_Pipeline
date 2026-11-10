@@ -7,13 +7,16 @@ Parameter finger: index | middle | ring | little | thumb_root | thumb
   pub  /finger/<finger>/state          sensor_msgs/JointState      1 joint: angle (rad), velocity (rad/s),
                                                                    effort = actuator force (N)
   pub  /finger/<finger>/angle_force    std_msgs/Float64MultiArray  [angle_deg, force_N, target_deg]
-  pub  /finger/<finger>/tactile        std_msgs/Float32MultiArray  fingertip tactile (not for thumb_root)
+  pub  /finger/<finger>/tactile        std_msgs/Float32MultiArray  fingertip 3D force (not for thumb_root)
+  pub  /finger/<finger>/tactile_proximal std_msgs/Float32MultiArray proximal phalanx normal force
+                                                                   (index, middle, ring)
 
 Hardware side (hand_sim or hand_serial in this package; one backend owns MuJoCo / the serial port,
 so the six finger nodes never open it themselves):
   pub  /hand_hw/<finger>/target        std_msgs/Float64            clamped target angle (rad)
   sub  /hand_hw/state                  sensor_msgs/JointState      all 6 actuators
   sub  /hand_hw/tactile/<finger>       std_msgs/Float32MultiArray
+  sub  /hand_hw/tactile_proximal/<f>   std_msgs/Float32MultiArray
 
 If the backend gives no velocity (real hand), it is estimated from consecutive angles.
 """
@@ -27,9 +30,10 @@ from sensor_msgs.msg import JointState
 from std_msgs.msg import Float32MultiArray, Float64, Float64MultiArray
 
 from finger_node.common import (
-    FINGER_LIMITS, FINGERS, HW_STATE_TOPIC, TACTILE_REGIONS, finger_angle_force_topic,
-    finger_command_topic, finger_state_topic, finger_tactile_topic, hw_tactile_topic,
-    hw_target_topic,
+    FINGER_LIMITS, FINGERS, HW_STATE_TOPIC, PROXIMAL_FINGERS, TACTILE_REGIONS,
+    finger_angle_force_topic, finger_command_topic, finger_state_topic,
+    finger_tactile_proximal_topic, finger_tactile_topic, hw_tactile_proximal_topic,
+    hw_tactile_topic, hw_target_topic,
 )
 
 NAN = float('nan')
@@ -71,6 +75,11 @@ class FingerNode(Node):
             self.pub_tactile = self.create_publisher(Float32MultiArray, finger_tactile_topic(f), 10)
             self.create_subscription(Float32MultiArray, hw_tactile_topic(f),
                                      self.pub_tactile.publish, 10)
+        if f in PROXIMAL_FINGERS:
+            self.pub_proximal = self.create_publisher(
+                Float32MultiArray, finger_tactile_proximal_topic(f), 10)
+            self.create_subscription(Float32MultiArray, hw_tactile_proximal_topic(f),
+                                     self.pub_proximal.publish, 10)
         if log_period > 0:
             self.create_timer(log_period, self.log_status)
         self.get_logger().info(f'finger={f} limits=[{self.lo:.3f}, {self.hi:.3f}] rad')

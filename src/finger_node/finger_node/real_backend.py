@@ -5,7 +5,17 @@ Same topics as the MuJoCo backend, so finger nodes work unchanged:
   sub  /hand_hw/<finger>/target        std_msgs/Float64 (rad)
   pub  /hand_hw/state                  sensor_msgs/JointState (angle rad, effort N)
   pub  /hand_hw/firmware_angle         sensor_msgs/JointState (ROH_FINGER_ANGLE, rad, reference only)
-  pub  /hand_hw/tactile/<region>       std_msgs/Float32MultiArray (force3d or dot_matrix)
+  pub  /hand_hw/tactile/<region>       std_msgs/Float32MultiArray: fingertip / palm (see below)
+  pub  /hand_hw/tactile_proximal/<f>   std_msgs/Float32MultiArray: proximal phalanx (index, middle, ring)
+
+Tactile (3D-force hand, sub_model 1; layout checked on the real hand with tactile_probe):
+  FORCE_EX0..4 (thumb, index, middle, ring, little): point 0 = fingertip [normal, tangential mN,
+    direction deg] -> 'force3d' [N, N, deg]; point 1 (index, middle, ring) = proximal phalanx
+    [normal mN, 0, 0] -> 'normal' [N]. 0xFFFF = invalid -> NaN.
+  FORCE_EX5 (palm): 28 registers, high then low byte = 56 taxels 0..255; the first 55 are the
+    11 x 5 grid (common.PALM_GRID, dead cells NaN) -> 'dot_matrix' with two dims.
+  (the OYMotion demo reads only the high palm byte; the low bytes do change on the real hand)
+Dot-matrix hand (sub_model 0): finger taxels as 'dot_matrix', palm as above, no proximal topic.
 
 command_mode
   position (default): ROH_FINGER_POS_TARGET / ROH_FINGER_POS, logical 0..65535 (0 = open), the
@@ -16,6 +26,8 @@ command_mode
 
 Targets are buffered and written once per poll (all 6 registers, Modbus 0x10), only when changed.
 Read-only unless the parameter enable_motion:=true is given.
+STOP / START: /hand_hw/motion_enable (Bool). False writes the measured positions as targets once
+(the hand holds where it is) and ignores targets until True. State on /hand_hw/motion_state.
 Register map: oymotion/roh_gen2_demos common/roh_registers_v2.py
 Tactile decoding: oymotion/roh_gen2_demos force_on_rohand/force_chart.py
 """
@@ -26,11 +38,12 @@ import rclpy
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from sensor_msgs.msg import JointState
-from std_msgs.msg import Float32MultiArray, Float64
+from std_msgs.msg import Bool, Float32MultiArray, Float64, String
 
 from finger_node.common import (
-    FINGER_LIMITS, FINGERS, HW_STATE_TOPIC, TACTILE_DOT_MATRIX, TACTILE_FORCE3D, TACTILE_REGIONS,
-    hw_tactile_topic, hw_target_topic, is_finite, make_tactile_msg,
+    FINGER_LIMITS, FINGERS, HW_MOTION_ENABLE_TOPIC, HW_MOTION_STATE_TOPIC, HW_STATE_TOPIC, PALM_GRID, PROXIMAL_FINGERS, TACTILE_DOT_MATRIX,
+    TACTILE_FORCE3D, TACTILE_NORMAL, TACTILE_REGIONS, hw_tactile_proximal_topic, hw_tactile_topic,
+    hw_target_topic, is_finite, make_tactile_msg, palm_values,
 )
 
 SLAVE_ID = 2
@@ -72,12 +85,19 @@ def decode_dot_matrix(regs):
 
 
 def decode_force3d(regs):
-    """Each register is one byte-swapped 16-bit value; 0xFFFF marks invalid data (-> -1)."""
+    """Each register is one byte-swapped 16-bit value; 0xFFFF marks invalid data (-> NaN)."""
     values = []
     for reg in regs:
         value = ((reg & 0xFF) << 8) | ((reg >> 8) & 0xFF)
-        values.append(-1 if value == 0xFFFF else value)
+        values.append(math.nan if value == 0xFFFF else value)
     return values
+
+
+def split_force3d(values):
+    """[n, t, dir, (n_proximal, -, -)] in mN / deg -> fingertip [N, N, deg], proximal [N] or None."""
+    tip = [values[0] / 1000.0, values[1] / 1000.0, values[2]]
+    proximal = [values[3] / 1000.0] if len(values) >= 6 else None
+    return tip, proximal
 
 
 class RealBackend(Node):
@@ -114,13 +134,21 @@ class RealBackend(Node):
 
         self.active = True
         self.failures = 0
+        self.read_angle = True
+        self.running = True        # STOP / START
+        self.hold_pending = False  # STOP pressed: write the measured pose as target on next poll
         self.pub_state = self.create_publisher(JointState, HW_STATE_TOPIC, 10)
         self.pub_fw_angle = self.create_publisher(JointState, '/hand_hw/firmware_angle', 10)
         self.pub_tactile = {r: self.create_publisher(Float32MultiArray, hw_tactile_topic(r), 10)
                             for r in TACTILE_REGIONS}
+        self.pub_proximal = {f: self.create_publisher(Float32MultiArray, hw_tactile_proximal_topic(f), 10)
+                             for f in PROXIMAL_FINGERS}
         for finger in FINGERS:
             self.create_subscription(Float64, hw_target_topic(finger),
                                      lambda msg, f=finger: self.on_target(f, msg), 10)
+        self.create_subscription(Bool, HW_MOTION_ENABLE_TOPIC, self.on_motion_enable, 10)
+        self.pub_motion_state = self.create_publisher(String, HW_MOTION_STATE_TOPIC, 10)
+        self.create_timer(0.5, self.publish_motion_state)
         self.create_timer(1.0 / rate, self.poll)
         self.get_logger().info(
             f"motion={'ENABLED' if self.enable_motion else 'READ ONLY'}; mode={self.mode}; "
@@ -159,7 +187,23 @@ class RealBackend(Node):
             return None
         return sub_model
 
+    def on_motion_enable(self, msg):
+        if msg.data == self.running:
+            return
+        self.running = msg.data
+        if not self.running:
+            self.hold_pending = True
+        self.get_logger().warning('START: following targets' if self.running else 'STOP: holding pose')
+        self.publish_motion_state()
+
+    def publish_motion_state(self):
+        state = ('read_only' if not self.enable_motion or not self.active
+                 else 'running' if self.running else 'stopped')
+        self.pub_motion_state.publish(String(data=state))
+
     def on_target(self, finger, msg):
+        if not self.running:
+            return  # STOP: hold the pose
         if not self.enable_motion or not self.active:
             self.get_logger().warning('read-only or comm error: target not sent',
                                       throttle_duration_sec=2.0)
@@ -185,10 +229,25 @@ class RealBackend(Node):
         if not self.active:
             return
         try:
+            if self.hold_pending and self.enable_motion:
+                # STOP: the measured pose becomes the target, so the fingers stay where they are
+                self.hold_pending = False
+                self.targets = self.read(POS_ADDR if self.mode == 'position' else ANGLE_ADDR, 6)
+                self.dirty = True
             if self.dirty and self.enable_motion:
                 self.dirty = False
                 self.write_block(self.target_addr, self.targets)
-            block = self.read(POS_ADDR, FORCE_ADDR + 6 - POS_ADDR)  # positions .. angles .. forces
+            # one read per register group: the real firmware rejects a span that crosses the
+            # unused finger slots 6..9 between them (IllegalAddress)
+            blocks = {POS_ADDR: self.read(POS_ADDR, 6), FORCE_ADDR: self.read(FORCE_ADDR, 6)}
+            if self.read_angle:
+                try:
+                    blocks[ANGLE_ADDR] = self.read(ANGLE_ADDR, 6)
+                except RuntimeError as exc:
+                    if self.mode == 'angle':
+                        raise
+                    self.read_angle = False  # reference only: stop asking
+                    self.get_logger().warning(f'firmware angle not readable, skipped: {exc}')
             tactile = self.read_tactile() if self.tactile_model is not None else None
             self.failures = 0
         except RuntimeError as exc:
@@ -201,10 +260,11 @@ class RealBackend(Node):
             return
 
         def reg(addr, finger):
-            return block[addr - POS_ADDR + FIRMWARE_INDEX[finger]]
+            return blocks[addr][FIRMWARE_INDEX[finger]]
 
         stamp = self.get_clock().now().to_msg()
-        fw_angle = [math.radians(to_int16(reg(ANGLE_ADDR, f)) / 100.0) for f in FINGERS]
+        fw_angle = ([math.radians(to_int16(reg(ANGLE_ADDR, f)) / 100.0) for f in FINGERS]
+                    if ANGLE_ADDR in blocks else None)
         state = JointState()
         state.header.stamp = stamp
         state.name = list(FINGERS)
@@ -215,28 +275,34 @@ class RealBackend(Node):
         state.effort = [reg(FORCE_ADDR, f) / 1000.0 for f in FINGERS]
         self.pub_state.publish(state)
 
-        fw = JointState()
-        fw.header.stamp = stamp
-        fw.name = list(FINGERS)
-        fw.position = fw_angle
-        self.pub_fw_angle.publish(fw)
+        if fw_angle is not None:
+            fw = JointState()
+            fw.header.stamp = stamp
+            fw.name = list(FINGERS)
+            fw.position = fw_angle
+            self.pub_fw_angle.publish(fw)
 
         if tactile is not None:
             kind = TACTILE_MODELS[self.tactile_model][0]
-            for region, values in zip(TACTILE_REGIONS, tactile):
-                region_kind = TACTILE_DOT_MATRIX if region == 'palm' else kind
-                self.pub_tactile[region].publish(make_tactile_msg(region_kind, values))
+            for region, regs in zip(TACTILE_REGIONS, tactile):
+                if region == 'palm':
+                    msg = make_tactile_msg(TACTILE_DOT_MATRIX, palm_values(decode_dot_matrix(regs)),
+                                           grid=PALM_GRID)
+                    self.pub_tactile[region].publish(msg)
+                elif kind == TACTILE_FORCE3D:
+                    tip, proximal = split_force3d(decode_force3d(regs))
+                    self.pub_tactile[region].publish(make_tactile_msg(TACTILE_FORCE3D, tip))
+                    if proximal is not None and region in self.pub_proximal:
+                        self.pub_proximal[region].publish(make_tactile_msg(TACTILE_NORMAL, proximal))
+                else:
+                    self.pub_tactile[region].publish(
+                        make_tactile_msg(TACTILE_DOT_MATRIX, decode_dot_matrix(regs)))
 
     def read_tactile(self):
-        kind, counts = TACTILE_MODELS[self.tactile_model]
-        values = []
-        for region, count in enumerate(counts):
-            regs = self.read(FORCE_EX_ADDR + region * FORCE_GROUP_SIZE, count)
-            if kind == TACTILE_FORCE3D and TACTILE_REGIONS[region] != 'palm':
-                values.append(decode_force3d(regs))
-            else:
-                values.append(decode_dot_matrix(regs))
-        return values
+        """Raw registers per region (TACTILE_REGIONS order)."""
+        _, counts = TACTILE_MODELS[self.tactile_model]
+        return [self.read(FORCE_EX_ADDR + region * FORCE_GROUP_SIZE, count)
+                for region, count in enumerate(counts)]
 
     def destroy_node(self):
         self.client.close()

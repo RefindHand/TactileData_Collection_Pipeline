@@ -1,4 +1,5 @@
 import math
+import signal
 import time
 
 import rclpy
@@ -433,6 +434,7 @@ def main(args=None):
         if rclpy.ok():
             raise  # a real error; otherwise Humble's take_message raced with Ctrl+C
     finally:
+        signal.signal(signal.SIGINT, signal.SIG_IGN)  # ros2 launch forwards a second Ctrl+C
         node.destroy_node()
         # Ctrl+C under ros2 launch may already have shut the context down
         rclpy.try_shutdown()
