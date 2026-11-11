@@ -113,4 +113,4 @@ launch 인자: `backend` (sim/real), `viewer`, `test_object` (ball/none), `port`
 - 참고용으로 펌웨어 각도를 `/hand_hw/firmware_angle`(`JointState`, rad)로 따로 발행한다.
 - 위치·힘·펌웨어 각도 레지스터는 그룹마다 따로 읽는다. 실물 펌웨어는 그 사이의 안 쓰는 손가락 7~10번 주소가 낀 연속 읽기를 `IllegalAddress`로 거부한다.
 - **STOP / START** (두 백엔드 공통): `/hand_hw/motion_enable` (`std_msgs/Bool`)이 `false`이면 측정한 현재 자세를 목표로 한 번 쓰고(실물) 또는 현재 관절값으로 고정하고(시뮬레이션), `true`가 올 때까지 목표를 무시한다. 상태는 `/hand_hw/motion_state` (`running` / `stopped` / `read_only`).
-- 레지스터 주소는 제조사 데모(`oymotion/roh_gen2_demos`) 기준이다. 촉각 배치(손끝·안쪽 마디·손바닥 바이트 순서·mN 단위)는 `tactile_probe`로 실물에서 확인했다. 관절 위치·힘 쓰기 동작은 아직 실물로 검증하지 않았다.
+- 레지스터 주소는 제조사 데모(`oymotion/roh_gen2_demos`) 기준이다. 실물에서 확인한 것: 위치 읽기·목표 쓰기(`real_mode:=position`)로 손가락이 명령대로 움직임, 촉각 배치(손끝·안쪽 마디·손바닥 바이트 순서·mN 단위, `tactile_probe`). 아직 확인 안 한 것: `real_mode:=angle`, 실물 손끝 접선력 방향의 축 기준.

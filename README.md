@@ -12,7 +12,8 @@
 - **통신:** USB-Serial(CH340), Modbus-RTU
 - **시뮬레이터:** MuJoCo
 - **손 인식:** MediaPipe Hands
-- **카메라(예정):** Orbbec Gemini 305
+- **로봇 핸드 카메라:** Intel RealSense D415 (실물), Orbbec Gemini 305 (MuJoCo 가상 카메라)
+- **촉각 센서 (AP002):** 손끝 3D 힘 ×5, 안쪽 마디 수직항력 ×3 (검지·중지·약지), 손바닥 11×5 점 배열
 
 ## 노드 구성
 
@@ -22,15 +23,15 @@
 | 손가락 노드 ×6 (액추에이터별 각도·힘) + 하드웨어 백엔드 (MuJoCo / 실물) | `src/finger_node` | [README](src/finger_node/README.md) |
 | 자세 명령 노드 | `src/pose_command` | [README](src/pose_command/README.md) |
 | 피드백 노드 (각도·힘·촉각 피드백) | `src/feedback_node` | [README](src/feedback_node/README.md) |
-| 로봇 핸드 카메라 노드 (Gemini 305, 현재 MuJoCo 가상 카메라) | `src/gripper_camera` | [README](src/gripper_camera/README.md) |
+| 로봇 핸드 카메라 노드 (가상 Gemini 305 / 실물 D415는 `hand_camera:=d415`) | `src/gripper_camera` | [README](src/gripper_camera/README.md) |
 | 전체 실행 (통합) | `src/hand_bringup` | [README](src/hand_bringup/README.md) |
 | 데이터 수집 GUI (힘 표시·녹화·Hugging Face 업로드) | `src/hand_gui` | [README](src/hand_gui/README.md) |
 
 ```text
 웹캠 ──/hand_landmarks──▶ 자세 명령 ──/finger/<f>/command──▶ 손가락 노드 ×6 ──▶ 로봇 핸드 (MuJoCo 또는 실물)
 (관절 21개 좌표)                      (목표 각도 rad)              │
-                                                                  └──/finger/<f>/state, tactile──▶ 피드백 노드
-로봇 핸드 카메라 ──▶ 영상
+                                                                  └──/finger/<f>/state, tactile, tactile_proximal──▶ 피드백 노드
+로봇 핸드 카메라 (가상 Gemini 305 또는 실물 D415) ──▶ 영상
 ```
 
 ## 프로젝트 구조
@@ -72,7 +73,10 @@ source install/setup.bash
 ros2 launch hand_bringup pipeline.launch.py                                    # MuJoCo + 이 PC 웹캠
 ros2 launch hand_bringup pipeline.launch.py team_sender:=remote                # 웹캠은 Windows에서 (WSL)
 ros2 launch hand_bringup pipeline.launch.py backend:=real enable_motion:=true  # 실물 AP002
+ros2 launch hand_bringup pipeline.launch.py backend:=real enable_motion:=true hand_camera:=d415 gui:=true  # 실물 + D415 + GUI
 ```
+
+실물 D415는 `sudo apt install ros-humble-realsense2-camera`가 필요합니다.
 
 웹캠 창이 뜨면 손을 한 번 끝까지 쥐었다 펴고 엄지를 크게 돌린 뒤(자동 보정) 손을 움직입니다. 자세한 내용은 [hand_bringup README](src/hand_bringup/README.md)를 참고합니다.
 
@@ -82,9 +86,10 @@ ros2 launch hand_bringup pipeline.launch.py backend:=real enable_motion:=true  #
 pip install --user "pyqtgraph==0.13.7" "numpy<2"     # 최초 1회
 ros2 launch hand_bringup pipeline.launch.py gui:=true                                    # 시뮬레이션
 ros2 launch hand_bringup pipeline.launch.py backend:=real enable_motion:=true gui:=true  # 실물
+ros2 launch hand_bringup pipeline.launch.py backend:=real enable_motion:=true hand_camera:=d415 gui:=true  # 실물 + D415
 ```
 
-GUI 창 하나에 로봇 손(힘 표시), 웹캠, 로봇 핸드 카메라, 힘 그래프가 나옵니다 (MuJoCo 창·웹캠 창은 열지 않음).
+GUI 창 하나에 로봇 손(손끝·안쪽 마디·손바닥 11×5 힘 표시), 웹캠, 로봇 핸드 카메라, 힘 그래프가 나옵니다 (MuJoCo 창·웹캠 창은 열지 않음). 왼쪽 맨 위 **■ STOP / ▶ START** 버튼(또는 Esc = STOP)으로 로봇 손을 멈추고 다시 움직입니다.
 
 1. 왼쪽 **녹화** 탭에서 작업(MW / LP / TFP / PS 등)과 메모를 입력합니다.
 2. **● 녹화 시작** → 동작 → **■ 녹화 정지**. 한 번이 에피소드 하나이며 `~/tactile_dataset/episode_NNNNNN/`에 저장됩니다.
@@ -116,13 +121,23 @@ ros2 topic echo /finger/index/angle_force
 | MuJoCo 창 | 바로 표시 | WSLg 필요 (`wsl --update`) |
 | 다른 PC와 ROS2 통신 | 같은 `ROS_DOMAIN_ID` | `.wslconfig`에 `networkingMode=mirrored` 설정 + 같은 `ROS_DOMAIN_ID` |
 
+**Ubuntu 22.04에서 `/dev/ttyUSB0`이 안 생길 때:** CH340은 인식되는데(`lsusb`) 포트가 없으면 점자 단말 프로그램 `brltty`가 장치를 가져간 것입니다. 점자 단말기를 쓰지 않으면 `sudo apt remove brltty` 후 USB를 다시 꽂습니다.
+
 AGX Orin은 ARM(aarch64)이므로 `mediapipe`, `mujoco` 설치 가능 여부를 먼저 확인합니다. 어떤 환경이든 `numpy`는 1.x를 유지해야 합니다 (numpy 2는 ROS2 Humble과 충돌).
 
 ## 공통 규약
 
 - 손가락(액추에이터) 순서: `index, middle, ring, little, thumb_root, thumb`
 - 굽힘 방향: **0 = 펴짐, 1(또는 최대 각도) = 굽힘** (MuJoCo·실물 공통)
-- 각도 단위: rad
+- 각도 단위: rad, 힘 단위: N
+- 촉각 (ROH-AP002 매뉴얼 7.4, 실물로 확인):
+
+  | 위치 | 센서 | 토픽 |
+  | --- | --- | --- |
+  | 손끝 (5개) | 3D 힘 `[수직 N, 접선 N, 방향°]` | `/finger/<f>/tactile` |
+  | 안쪽 마디 (검지·중지·약지) | 수직항력 `[N]` | `/finger/<f>/tactile_proximal` |
+  | 손바닥 | 11×5 점 배열 (실물 0~255) | `/hand_hw/tactile/palm` |
+
 - 노드별 토픽은 각 패키지 README를 참고합니다.
 
 ## 로봇 핸드 테스트
@@ -135,6 +150,9 @@ source /opt/ros/humble/setup.bash
 
 # 실물 AP002 연결 상태 및 관절 위치 확인 (읽기 전용)
 python3 hardware_connection_test/rohand_real_ros2.py
+
+# 실물 촉각 센서 원시값 확인 (읽기 전용, 누른 곳이 어떤 값으로 들어오는지)
+ros2 run finger_node tactile_probe
 ```
 
 실물 손가락 제어, MuJoCo 시뮬레이터 실행 및 Windows–WSL2 USB 연결 방법은 **[Hardware Connection Test 안내서](hardware_connection_test/README.md)** 를 참고하세요.

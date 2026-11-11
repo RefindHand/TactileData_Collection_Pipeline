@@ -21,6 +21,9 @@ pip install --user "pyqtgraph==0.13.7" "numpy<2"     # 최초 1회 (numpy 2는 R
 # 파이프라인과 함께 (GUI 창 하나만 뜸: MuJoCo 창·웹캠 창은 닫아 둠)
 ros2 launch hand_bringup pipeline.launch.py gui:=true
 
+# 실물 + D415 핸드 카메라
+ros2 launch hand_bringup pipeline.launch.py backend:=real enable_motion:=true hand_camera:=d415 gui:=true
+
 # 따로 (파이프라인이 이미 실행 중일 때)
 ros2 run hand_gui hand_gui
 ros2 run hand_gui hand_gui --ros-args -p data_dir:=~/tactile_dataset -p test_object:=ball
@@ -31,7 +34,8 @@ ros2 run hand_gui hand_gui --ros-args -p data_dir:=~/tactile_dataset -p test_obj
 | `data_dir` | `~/tactile_dataset` | 에피소드 저장 폴더 (화면에서도 변경 가능) |
 | `test_object` | `none` | `ball`: 시뮬레이션의 테스트 공을 로봇 손 화면에도 표시 |
 | `hand_xml` | `''` | AP002 MJCF 경로 (비우면 `external/rohand_mujoco/...`) |
-| `robot_camera_topic` | `/gripper_camera/color/image_raw` | 로봇 핸드 카메라 영상 (`sensor_msgs/Image`, rgb8/bgr8/mono8) |
+| `robot_camera_topic` | `/gripper_camera/color/image_raw` | 로봇 핸드 카메라 영상 (`sensor_msgs/Image`, rgb8/bgr8/mono8). `hand_bringup`이 D415일 때 `/hand_camera/d415/color/image_raw`로 바꿈 |
+| `robot_camera_rotation` | `90` | 로봇 핸드 카메라 화면 회전 (반시계, 도). 표시만 바뀌고 녹화는 원본. `hand_bringup`은 가상 90, D415 0 |
 | `webcam_topic` | `/webcam/image_annotated/compressed` | 웹캠 영상 (`sensor_msgs/CompressedImage`) |
 
 웹캠 영상은 `linux_webcam_sender --publish-image`가 보낸다 (`hand_bringup`은 자동으로 켬). `gui:=true`이면 웹캠 프로그램은 창 없이(`--no-window`) 돌고 MuJoCo 창도 열지 않는다. 웹캠 창의 보정 키(`F` 등)는 확인용 값에만 쓰이고, 로봇 제어용 보정은 자세 명령 노드가 자동으로 하므로 **보정** 탭의 초기화 버튼으로 충분하다. Windows에서 웹캠을 실행하는 경우(`team_sender:=remote`)에는 웹캠 칸이 비어 있다.
