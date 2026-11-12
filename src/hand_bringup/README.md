@@ -48,7 +48,7 @@ ros2 launch hand_bringup pipeline.launch.py backend:=real enable_motion:=true
 | `real_mode` | `position` | `position` (검증된 위치 레지스터) / `angle` (미검증) |
 | `log_period` | `1.0` | 손가락 노드 각도·힘 출력 주기 (초, 0이면 끔) |
 | `team_sender` | `local` | `local`: 이 PC에서 웹캠 프로그램 실행 / `remote`: 다른 PC(Windows)가 UDP 5005로 전송 |
-| `camera_device` | `0` | 웹캠 번호 `/dev/videoN` (`team_sender:=local`) |
+| `camera_device` | `0` | 웹캠 번호 `/dev/videoN` (`team_sender:=local`). RealSense를 함께 꽂으면 RealSense도 `/dev/video*`를 만들어 웹캠 번호가 바뀔 수 있다 (Jetson: [README](../../README.md#8-실행)) |
 | `hand_camera` | `virtual` | 로봇 핸드 카메라: `virtual` (MuJoCo 가상 Gemini 305) / `d405` (실물 RealSense D405, 현재 그리퍼 카메라) / `d415` (실물 RealSense D415, 이전 카메라) / `none` |
 | `hand_camera_rotation` | `auto` | GUI 표시 회전(반시계, 도): `auto` (가상 90, D405·D415 0) / `0` / `90` / `180` / `270`. 녹화는 원본 방향 |
 | `gripper_camera` | `true` | 가상 Gemini 305 카메라 실행 (`hand_camera:=virtual`일 때) |
@@ -72,4 +72,6 @@ ros2 launch hand_bringup pipeline.launch.py backend:=real hand_camera:=d405 gui:
 
 - 웹캠에서 손이 0.5초 이상 사라지면 자세 명령 노드가 **모든 손가락을 펴는 명령**을 보낸다. 실물로 물체를 쥘 때 주의한다.
 - 실물 시리얼 포트는 한 프로그램만 쓸 수 있다. `hardware_connection_test`의 프로그램과 동시에 실행하지 않는다.
+- 파이프라인도 한 번에 하나만 실행한다. 이미 실행 중이면 새로 띄운 쪽의 `hand_serial`(시리얼 포트), `hand_tracking_node`(UDP 5005), 웹캠 노드가 바로 끝나서, 화면은 앞의 파이프라인 데이터로 정상처럼 보이는데 손이 움직이지 않는다. 확인: `pgrep -af "ros2 launch"`
+- `hand_serial`이 `Permission denied: '/dev/ttyUSB0'`로 끝나면 `dialout` 그룹 권한이 없는 것이다 (`id -nG`로 확인, 추가 후 재부팅).
 - 각 노드의 토픽·준비물은 패키지별 README를 참고한다: [hand_tracking](../hand_tracking/README.md), [pose_command](../pose_command/README.md), [finger_node](../finger_node/README.md), [feedback_node](../feedback_node/README.md), [gripper_camera](../gripper_camera/README.md), [hand_gui](../hand_gui/README.md).

@@ -7,6 +7,7 @@
 ## 개발 환경
 
 - **OS:** Ubuntu 22.04 (데스크탑, Jetson AGX Orin) 또는 Windows + WSL2 Ubuntu 22.04
+  - Jetson AGX Orin (JetPack 6, L4T R36.5)에서 실물 AP002 + D405 + GUI 동작을 확인했다. 준비는 [Jetson AGX Orin 설정](#jetson-agx-orin-설정) 참고
 - **ROS:** ROS2 Humble
 - **로봇 핸드:** OYMotion ROHand AP002 (오른손)
 - **통신:** USB-Serial(CH340), Modbus-RTU
@@ -114,16 +115,108 @@ ros2 topic echo /finger/index/angle_force
 
 ## 실행 환경별 차이
 
-| 항목 | Ubuntu 22.04 (데스크탑, AGX Orin) | Windows + WSL2 |
-| --- | --- | --- |
-| 웹캠 | Ubuntu에서 직접 사용 (`team_sender:=local`, 기본) | Windows에서 `windows_sender/`를 실행해 UDP로 전송 (`team_sender:=remote`) |
-| 실물 USB (`/dev/ttyUSB0`) | 바로 인식 | Windows에서 `usbipd`로 WSL에 연결 ([안내서](hardware_connection_test/README.md)) |
-| MuJoCo 창 | 바로 표시 | WSLg 필요 (`wsl --update`) |
-| 다른 PC와 ROS2 통신 | 같은 `ROS_DOMAIN_ID` | `.wslconfig`에 `networkingMode=mirrored` 설정 + 같은 `ROS_DOMAIN_ID` |
+| 항목 | Ubuntu 22.04 데스크탑 | Jetson AGX Orin (JetPack 6) | Windows + WSL2 |
+| --- | --- | --- | --- |
+| 웹캠 | Ubuntu에서 직접 사용 (`team_sender:=local`, 기본) | 데스크탑과 같음. RealSense도 `/dev/video*`를 만들어 웹캠 번호가 바뀔 수 있음 → `camera_device:=N` | Windows에서 `windows_sender/`를 실행해 UDP로 전송 (`team_sender:=remote`) |
+| 실물 USB (`/dev/ttyUSB0`) | 바로 인식 | 커널에 CH340 드라이버가 없어 직접 빌드 ([아래](#4-ch340-usb-시리얼-드라이버-ch341)) | Windows에서 `usbipd`로 WSL에 연결 ([안내서](hardware_connection_test/README.md)) |
+| MuJoCo 창 · GUI | 바로 표시 | Jetson에 연결한 화면에 표시. 원격 접속에서는 `DISPLAY=:1` ([아래](#7-원격-접속-vs-code-remote-ssh에서-실행)) | WSLg 필요 (`wsl --update`) |
+| 다른 PC와 ROS2 통신 | 같은 `ROS_DOMAIN_ID` | 같은 `ROS_DOMAIN_ID` | `.wslconfig`에 `networkingMode=mirrored` 설정 + 같은 `ROS_DOMAIN_ID` |
 
-**Ubuntu 22.04에서 `/dev/ttyUSB0`이 안 생길 때:** CH340은 인식되는데(`lsusb`) 포트가 없으면 점자 단말 프로그램 `brltty`가 장치를 가져간 것입니다. 점자 단말기를 쓰지 않으면 `sudo apt remove brltty` 후 USB를 다시 꽂습니다.
+**Ubuntu 22.04에서 `/dev/ttyUSB0`이 안 생길 때:** CH340은 인식되는데(`lsusb`) 포트가 없으면 점자 단말 프로그램 `brltty`가 장치를 가져간 것입니다. 점자 단말기를 쓰지 않으면 `sudo apt remove brltty` 후 USB를 다시 꽂습니다. Jetson은 이것 외에 드라이버도 없습니다 (아래).
 
-AGX Orin은 ARM(aarch64)이므로 `mediapipe`, `mujoco` 설치 가능 여부를 먼저 확인합니다. 어떤 환경이든 `numpy`는 1.x를 유지해야 합니다 (numpy 2는 ROS2 Humble과 충돌).
+어떤 환경이든 `numpy`는 1.x를 유지해야 합니다 (numpy 2는 ROS2 Humble과 충돌).
+
+## Jetson AGX Orin 설정
+
+JetPack 6 (L4T R36.5, Ubuntu 22.04, 커널 `5.15.x-tegra`, aarch64) 기준입니다. 처음 한 번만 합니다.
+
+### 1. ROS2 Humble, RealSense 드라이버, apt 패키지
+
+[ROS2 Humble 설치 안내](https://docs.ros.org/en/humble/Installation/Ubuntu-Install-Debs.html)대로 apt 저장소를 추가한 뒤 설치합니다.
+
+```bash
+sudo apt install ros-humble-desktop ros-dev-tools \
+    ros-humble-realsense2-camera ros-humble-rqt-image-view \
+    python3-pip python3-pyqt5 python3-opencv
+echo 'source /opt/ros/humble/setup.bash' >> ~/.bashrc
+```
+
+### 2. pip 패키지
+
+모두 aarch64용 wheel이 있습니다 (mediapipe는 0.10.14까지 aarch64 wheel이 있고 0.10.21은 없음).
+
+```bash
+python3 -m pip install --user "numpy<2" "pyqtgraph==0.13.7" mujoco "mediapipe==0.10.14" \
+    "opencv-contrib-python<4.12" "pymodbus==3.7.2" "pyserial==3.5" "huggingface_hub<1"
+```
+
+### 3. RealSense udev 규칙 (root 없이 D405 사용)
+
+```bash
+sudo curl -fsSL -o /etc/udev/rules.d/99-realsense-libusb.rules \
+    https://raw.githubusercontent.com/IntelRealSense/librealsense/master/config/99-realsense-libusb.rules
+sudo udevadm control --reload-rules && sudo udevadm trigger
+```
+
+### 4. CH340 USB-시리얼 드라이버 (`ch341`)
+
+JetPack 커널에는 CH340 드라이버가 없어서 AP002를 꽂아도(`lsusb`에 `1a86:7523`) `/dev/ttyUSB0`이 생기지 않습니다 (`modinfo ch341` → not found). 같은 버전의 리눅스 소스에서 드라이버 하나만 빌드해 넣습니다. 커널 헤더(`/lib/modules/$(uname -r)/build`)는 JetPack에 들어 있습니다.
+
+```bash
+mkdir -p ~/ch341 && cd ~/ch341
+KVER=$(uname -r | cut -d- -f1)          # 예: 5.15.199
+curl -fsSL -o ch341.c "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/plain/drivers/usb/serial/ch341.c?h=v${KVER}"
+echo 'obj-m += ch341.o' > Makefile
+make -C /lib/modules/$(uname -r)/build M=$PWD modules
+sudo install -D -m 644 ch341.ko /lib/modules/$(uname -r)/updates/ch341.ko
+sudo depmod -a && sudo modprobe ch341
+echo ch341 | sudo tee /etc/modules-load.d/ch341.conf    # 부팅 때 자동으로 불러옴
+```
+
+JetPack 커널을 업데이트하면 다시 빌드합니다.
+
+### 5. 시리얼 포트 권한, `brltty` 제거
+
+```bash
+sudo usermod -aG dialout $USER
+sudo apt remove brltty        # 점자 단말기를 쓰지 않을 때
+sudo reboot
+```
+
+**재부팅해야 합니다.** VS Code Remote-SSH 같은 원격 접속이 열려 있으면 Jetson 화면에서 로그아웃했다가 다시 로그인해도 새 그룹이 적용되지 않습니다 (원격 접속이 사용자 세션을 계속 붙잡고 있음). 확인: `id -nG`에 `dialout`이 있어야 합니다. 권한이 없으면 `hand_serial`이 `Permission denied: '/dev/ttyUSB0'`을 출력하고 바로 끝나서, GUI에 촉각이 안 나오고 손도 움직이지 않습니다.
+
+### 6. AP002 MuJoCo 모델
+
+GUI의 로봇 손 화면과 시뮬레이션에 필요합니다.
+
+```bash
+cd ~/TactileData_Collection_Pipeline
+git clone https://github.com/oymotion/rohand_mujoco.git external/rohand_mujoco
+```
+
+그다음 [빌드](#빌드)합니다.
+
+### 7. 원격 접속 (VS Code Remote-SSH)에서 실행
+
+원격 터미널에는 화면이 없어서 GUI가 뜨지 않습니다. Jetson 화면에 로그인되어 있으면 아래처럼 Jetson 화면에 띄울 수 있습니다. Jetson 화면의 터미널에서 직접 실행해도 됩니다.
+
+```bash
+export DISPLAY=:1 XAUTHORITY=/run/user/$(id -u)/gdm/Xauthority
+```
+
+### 8. 실행
+
+```bash
+# 웹캠 번호 확인: RealSense가 /dev/video*를 여러 개 만들어 부팅마다 바뀔 수 있음
+for v in /sys/class/video4linux/video*; do echo "$(basename $v): $(cat $v/name)"; done
+
+ros2 launch hand_bringup pipeline.launch.py backend:=real hand_camera:=d405 gui:=true camera_device:=6                      # 읽기 전용
+ros2 launch hand_bringup pipeline.launch.py backend:=real enable_motion:=true hand_camera:=d405 gui:=true camera_device:=6  # 동작 허용
+```
+
+- `camera_device`는 웹캠 이름(예: `Logitech StreamCam`)이 붙은 장치 중 **번호가 작은 쪽**입니다.
+- 파이프라인은 **한 번에 하나만** 실행합니다. 이미 실행 중이면 새로 띄운 쪽의 `hand_serial`(시리얼 포트), 손 인식 노드(UDP 5005), 웹캠 노드가 바로 끝나서 손이 움직이지 않습니다. 확인: `pgrep -af "ros2 launch"`
+- 확인한 속도: D405 컬러·깊이 640×480 30 Hz, 실물 손 상태·촉각 약 10 Hz, 웹캠 손 인식 약 10 Hz (MediaPipe CPU).
 
 ## 공통 규약
 
@@ -157,4 +250,4 @@ ros2 run finger_node tactile_probe
 
 실물 손가락 제어, MuJoCo 시뮬레이터 실행 및 Windows–WSL2 USB 연결 방법은 **[Hardware Connection Test 안내서](hardware_connection_test/README.md)** 를 참고하세요.
 
-> **참고:** `external/` 및 ROS2 빌드 결과물은 GitHub 저장소에 포함되지 않으므로 개발환경에 맞게 별도 준비해야 합니다.
+> **참고:** `external/` 및 ROS2 빌드 결과물은 GitHub 저장소에 포함되지 않으므로 개발환경에 맞게 별도 준비해야 합니다. AP002 모델은 `git clone https://github.com/oymotion/rohand_mujoco.git external/rohand_mujoco`로 받습니다.
