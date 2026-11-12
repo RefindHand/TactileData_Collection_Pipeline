@@ -15,7 +15,7 @@
   <exec_depend>feedback_node</exec_depend>
   <exec_depend>gripper_camera</exec_depend>
   <exec_depend>hand_gui</exec_depend>
-  <!-- only for hand_camera:=d415 (apt: ros-humble-realsense2-camera) -->
+  <!-- only for hand_camera:=d405 / d415 (apt: ros-humble-realsense2-camera) -->
   <exec_depend>realsense2_camera</exec_depend>
 
   <export>

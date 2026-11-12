@@ -49,22 +49,24 @@ ros2 launch hand_bringup pipeline.launch.py backend:=real enable_motion:=true
 | `log_period` | `1.0` | 손가락 노드 각도·힘 출력 주기 (초, 0이면 끔) |
 | `team_sender` | `local` | `local`: 이 PC에서 웹캠 프로그램 실행 / `remote`: 다른 PC(Windows)가 UDP 5005로 전송 |
 | `camera_device` | `0` | 웹캠 번호 `/dev/videoN` (`team_sender:=local`) |
-| `hand_camera` | `virtual` | 로봇 핸드 카메라: `virtual` (MuJoCo 가상 Gemini 305) / `d415` (실물 RealSense D415) / `none` |
-| `hand_camera_rotation` | `auto` | GUI 표시 회전(반시계, 도): `auto` (가상 90, D415 0) / `0` / `90` / `180` / `270`. 녹화는 원본 방향 |
+| `hand_camera` | `virtual` | 로봇 핸드 카메라: `virtual` (MuJoCo 가상 Gemini 305) / `d405` (실물 RealSense D405, 현재 그리퍼 카메라) / `d415` (실물 RealSense D415, 이전 카메라) / `none` |
+| `hand_camera_rotation` | `auto` | GUI 표시 회전(반시계, 도): `auto` (가상 90, D405·D415 0) / `0` / `90` / `180` / `270`. 녹화는 원본 방향 |
 | `gripper_camera` | `true` | 가상 Gemini 305 카메라 실행 (`hand_camera:=virtual`일 때) |
 | `camera_mode` | `rgb` | 카메라 영상: `rgb` / `left` / `right` / `disparity` / `depth` (실행 중 변경: `ros2 param set /gripper_camera mode depth`) |
 | `gui` | `false` | 데이터 수집 GUI ([hand_gui](../hand_gui/README.md)): 로봇 손 힘 표시, 웹캠·로봇 카메라, 힘 그래프, 녹화, Hugging Face 업로드. `true`이면 MuJoCo 창과 웹캠 창은 열지 않음 |
 | `data_dir` | `~/tactile_dataset` | GUI 녹화 저장 폴더 |
 
-## 실물 RealSense D415
+## 실물 RealSense D405 (그리퍼 카메라)
 
 ```bash
 sudo apt install ros-humble-realsense2-camera     # 최초 1회
-ros2 launch hand_bringup pipeline.launch.py backend:=real hand_camera:=d415 gui:=true
+ros2 launch hand_bringup pipeline.launch.py backend:=real hand_camera:=d405 gui:=true
 ```
 
-- 컬러 `/hand_camera/d415/color/image_raw` (640×480, 30 Hz), 컬러에 맞춘 깊이 `/hand_camera/d415/aligned_depth_to_color/image_raw`. GUI·녹화는 컬러 영상을 쓴다.
+- 컬러 `/hand_camera/d405/color/image_raw` (640×480, 30 Hz), 컬러에 맞춘 깊이 `/hand_camera/d405/aligned_depth_to_color/image_raw`. GUI·녹화는 컬러 영상을 쓴다.
+- D405는 별도 RGB 센서가 없고 깊이 모듈이 컬러도 낸다. 그래서 해상도는 `depth_module.color_profile`로 정한다 (D415의 `rgb_camera.color_profile`은 D405에서 무시됨). 근거리용(약 7~50 cm)이라 그리퍼 카메라에 맞다.
 - USB 3 포트에 연결한다 (`lsusb -t`에서 5000M).
+- 이전 카메라 D415는 `hand_camera:=d415`로 그대로 쓸 수 있다 (토픽 `/hand_camera/d415/...`). 두 카메라가 함께 꽂혀 있어도 `device_type`으로 고른 모델만 연다.
 
 ## 주의
 

@@ -7,7 +7,7 @@ Orbbec **Gemini 305** CAD 모델과 가상 **Passive Stereo RGB-D 카메라**를
 | **ROS2 카메라 노드** `camera_node` | 선택한 영상을 `sensor_msgs/Image` + `CameraInfo` 토픽으로 발행 |
 | **독립 테스트** `gemini305_sim.py` | ROS 없이 선택한 영상을 OpenCV 창으로 바로 확인 |
 
-두 실행 방식은 같은 장면·렌더링·Depth 계산 코드(`gemini305_sim.py`)를 쓴다. ROS2 노드는 파이프라인이 실행 중이면 영상 속 손이 실제 손 자세를 따라간다 (아래 [손 자세 따라가기](#손-자세-따라가기)). `ros2 launch hand_bringup pipeline.launch.py`에 포함되어 있다 (기본 `hand_camera:=virtual`). 실물 핸드 카메라는 현재 Intel RealSense D415를 쓰며, 이 패키지가 아니라 RealSense ROS 드라이버로 `hand_bringup`의 `hand_camera:=d415`에서 실행한다. 영상 저장은 `hand_gui` 녹화가 한다.
+두 실행 방식은 같은 장면·렌더링·Depth 계산 코드(`gemini305_sim.py`)를 쓴다. ROS2 노드는 파이프라인이 실행 중이면 영상 속 손이 실제 손 자세를 따라간다 (아래 [손 자세 따라가기](#손-자세-따라가기)). `ros2 launch hand_bringup pipeline.launch.py`에 포함되어 있다 (기본 `hand_camera:=virtual`). 실물 핸드 카메라는 현재 Intel RealSense D405를 쓰며 (이전에는 D415), 이 패키지가 아니라 RealSense ROS 드라이버로 `hand_bringup`의 `hand_camera:=d405`에서 실행한다. 영상 저장은 `hand_gui` 녹화가 한다.
 
 ## 준비물
 

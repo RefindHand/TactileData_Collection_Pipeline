@@ -12,7 +12,8 @@
   ros2 launch hand_bringup pipeline.launch.py camera_mode:=depth                # camera stream
   ros2 launch hand_bringup pipeline.launch.py gripper_camera:=false             # no camera
   ros2 launch hand_bringup pipeline.launch.py gui:=true                         # data collection GUI
-  ros2 launch hand_bringup pipeline.launch.py backend:=real hand_camera:=d415 gui:=true  # real hand + D415
+  ros2 launch hand_bringup pipeline.launch.py backend:=real hand_camera:=d405 gui:=true  # real hand + D405
+  ros2 launch hand_bringup pipeline.launch.py backend:=real hand_camera:=d415 gui:=true  # real hand + D415 (old)
 """
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, OpaqueFunction
@@ -38,9 +39,11 @@ ARGS = {
                              'remote: another PC (e.g. Windows) sends UDP 5005'),
     'camera_device': ('0', 'webcam index /dev/videoN (team_sender:=local)'),
     'hand_camera': ('virtual', 'robot hand camera: virtual (MuJoCo Gemini 305, follows the hand) | '
-                               'd415 (Intel RealSense D415, needs ros-humble-realsense2-camera) | none'),
+                               'd405 (Intel RealSense D405, current gripper camera) | '
+                               'd415 (Intel RealSense D415, old) | none. '
+                               'd405/d415 need ros-humble-realsense2-camera'),
     'hand_camera_rotation': ('auto', 'GUI display rotation of the hand camera, counter-clockwise deg: '
-                                     'auto (virtual 90, d415 0) | 0 | 90 | 180 | 270'),
+                                     'auto (virtual 90, d405/d415 0) | 0 | 90 | 180 | 270'),
     'gripper_camera': ('true', 'virtual Gemini 305 gripper camera on/off (hand_camera:=virtual)'),
     'camera_mode': ('rgb', 'gripper camera stream: rgb | left | right | disparity | depth'),
     'gui': ('false', 'data collection GUI (hand_gui): hand view, cameras, force plots, recording. '
@@ -48,19 +51,55 @@ ARGS = {
     'data_dir': ('~/tactile_dataset', 'hand_gui episode folder'),
 }
 
+# Real RealSense hand cameras (hand_camera:=<key>): rs_launch.py arguments per model.
+# D405 has no separate RGB sensor: its color stream comes from the depth module, so the color
+# profile is set on depth_module (rgb_camera.* would be ignored). Color and depth share one
+# imager, so they are already aligned; align_depth keeps the same topic names as the D415.
+REALSENSE_CAMERAS = {
+    'd405': {
+        'depth_module.color_profile': '640,480,30',
+        'depth_module.depth_profile': '640,480,30',
+    },
+    'd415': {
+        'rgb_camera.color_profile': '640,480,30',
+        'depth_module.depth_profile': '640,480,30',
+    },
+}
+REALSENSE_LIST = repr(list(REALSENSE_CAMERAS))  # "['d405', 'd415']" for PythonExpression
+
 
 def check_requirements(context):
-    """Stop before any node starts if hand_camera:=d415 lacks its driver: a launch that fails
-    half way leaves the nodes it already started running (they keep publishing commands)."""
-    if LaunchConfiguration('hand_camera').perform(context) == 'd415':
+    """Stop before any node starts if a RealSense hand camera lacks its driver: a launch that
+    fails half way leaves the nodes it already started running (they keep publishing commands)."""
+    hand_camera = LaunchConfiguration('hand_camera').perform(context)
+    if hand_camera not in ('virtual', 'none', *REALSENSE_CAMERAS):
+        raise RuntimeError(f'unknown hand_camera:={hand_camera} '
+                           f'(virtual | {" | ".join(REALSENSE_CAMERAS)} | none)')
+    if hand_camera in REALSENSE_CAMERAS:
         from ament_index_python.packages import PackageNotFoundError, get_package_share_directory
         try:
             get_package_share_directory('realsense2_camera')
         except PackageNotFoundError:
-            raise RuntimeError('hand_camera:=d415 needs the RealSense driver: '
+            raise RuntimeError(f'hand_camera:={hand_camera} needs the RealSense driver: '
                                'sudo apt install ros-humble-realsense2-camera '
-                               '(or run without hand_camera:=d415)') from None
+                               f'(or run without hand_camera:={hand_camera})') from None
     return []
+
+
+def realsense_camera(model, hand_camera):
+    """RealSense driver for one model: /hand_camera/<model>/color/image_raw,
+    /hand_camera/<model>/aligned_depth_to_color/image_raw (+ camera_info)."""
+    return IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(PathJoinSubstitution(
+            [FindPackageShare('realsense2_camera'), 'launch', 'rs_launch.py'])),
+        launch_arguments={
+            'camera_namespace': 'hand_camera',
+            'camera_name': model,
+            'device_type': model,  # pick this model if several RealSense cameras are plugged in
+            'align_depth.enable': 'true',
+            **REALSENSE_CAMERAS[model],
+        }.items(),
+        condition=IfCondition(PythonExpression(["'", hand_camera, f"' == '{model}'"])))
 
 
 def generate_launch_description():
@@ -108,19 +147,8 @@ def generate_launch_description():
              condition=IfCondition(PythonExpression(
                  ["'", cfg['gripper_camera'], "' == 'true' and '", cfg['hand_camera'], "' == 'virtual'"]))),
 
-        # hand camera, real D415: /hand_camera/d415/color/image_raw,
-        # /hand_camera/d415/aligned_depth_to_color/image_raw (+ camera_info)
-        IncludeLaunchDescription(
-            PythonLaunchDescriptionSource(PathJoinSubstitution(
-                [FindPackageShare('realsense2_camera'), 'launch', 'rs_launch.py'])),
-            launch_arguments={
-                'camera_namespace': 'hand_camera',
-                'camera_name': 'd415',
-                'rgb_camera.color_profile': '640,480,30',
-                'depth_module.depth_profile': '640,480,30',
-                'align_depth.enable': 'true',
-            }.items(),
-            condition=IfCondition(PythonExpression(["'", cfg['hand_camera'], "' == 'd415'"]))),
+        # hand camera, real RealSense (D405 / D415)
+        *[realsense_camera(model, cfg['hand_camera']) for model in REALSENSE_CAMERAS],
 
         # data collection GUI
         Node(package='hand_gui', executable='hand_gui', name='hand_gui', output='screen',
@@ -129,10 +157,10 @@ def generate_launch_description():
                           'test_object': PythonExpression(["'", cfg['test_object'], "' if '",
                                                            cfg['backend'], "' == 'sim' else 'none'"]),
                           'robot_camera_topic': PythonExpression([
-                              "'/hand_camera/d415/color/image_raw' if '", cfg['hand_camera'],
-                              "' == 'd415' else '/gripper_camera/color/image_raw'"]),
+                              "'/hand_camera/' + '", cfg['hand_camera'], "' + '/color/image_raw' if '",
+                              cfg['hand_camera'], f"' in {REALSENSE_LIST} else '/gripper_camera/color/image_raw'"]),
                           'robot_camera_rotation': PythonExpression([
-                              "(0 if '", cfg['hand_camera'], "' == 'd415' else 90) if '",
+                              "(0 if '", cfg['hand_camera'], f"' in {REALSENSE_LIST} else 90) if '",
                               cfg['hand_camera_rotation'], "' == 'auto' else int('",
                               cfg['hand_camera_rotation'], "')"])}],
              condition=IfCondition(cfg['gui'])),

@@ -12,7 +12,7 @@
 - **통신:** USB-Serial(CH340), Modbus-RTU
 - **시뮬레이터:** MuJoCo
 - **손 인식:** MediaPipe Hands
-- **로봇 핸드 카메라:** Intel RealSense D415 (실물), Orbbec Gemini 305 (MuJoCo 가상 카메라)
+- **로봇 핸드 카메라:** Intel RealSense D405 (실물, 이전에는 D415), Orbbec Gemini 305 (MuJoCo 가상 카메라)
 - **촉각 센서 (AP002):** 손끝 3D 힘 ×5, 안쪽 마디 수직항력 ×3 (검지·중지·약지), 손바닥 11×5 점 배열
 
 ## 노드 구성
@@ -23,7 +23,7 @@
 | 손가락 노드 ×6 (액추에이터별 각도·힘) + 하드웨어 백엔드 (MuJoCo / 실물) | `src/finger_node` | [README](src/finger_node/README.md) |
 | 자세 명령 노드 | `src/pose_command` | [README](src/pose_command/README.md) |
 | 피드백 노드 (각도·힘·촉각 피드백) | `src/feedback_node` | [README](src/feedback_node/README.md) |
-| 로봇 핸드 카메라 노드 (가상 Gemini 305 / 실물 D415는 `hand_camera:=d415`) | `src/gripper_camera` | [README](src/gripper_camera/README.md) |
+| 로봇 핸드 카메라 노드 (가상 Gemini 305 / 실물 D405는 `hand_camera:=d405`) | `src/gripper_camera` | [README](src/gripper_camera/README.md) |
 | 전체 실행 (통합) | `src/hand_bringup` | [README](src/hand_bringup/README.md) |
 | 데이터 수집 GUI (힘 표시·녹화·Hugging Face 업로드) | `src/hand_gui` | [README](src/hand_gui/README.md) |
 
@@ -31,7 +31,7 @@
 웹캠 ──/hand_landmarks──▶ 자세 명령 ──/finger/<f>/command──▶ 손가락 노드 ×6 ──▶ 로봇 핸드 (MuJoCo 또는 실물)
 (관절 21개 좌표)                      (목표 각도 rad)              │
                                                                   └──/finger/<f>/state, tactile, tactile_proximal──▶ 피드백 노드
-로봇 핸드 카메라 (가상 Gemini 305 또는 실물 D415) ──▶ 영상
+로봇 핸드 카메라 (가상 Gemini 305 또는 실물 D405) ──▶ 영상
 ```
 
 ## 프로젝트 구조
@@ -73,10 +73,10 @@ source install/setup.bash
 ros2 launch hand_bringup pipeline.launch.py                                    # MuJoCo + 이 PC 웹캠
 ros2 launch hand_bringup pipeline.launch.py team_sender:=remote                # 웹캠은 Windows에서 (WSL)
 ros2 launch hand_bringup pipeline.launch.py backend:=real enable_motion:=true  # 실물 AP002
-ros2 launch hand_bringup pipeline.launch.py backend:=real enable_motion:=true hand_camera:=d415 gui:=true  # 실물 + D415 + GUI
+ros2 launch hand_bringup pipeline.launch.py backend:=real enable_motion:=true hand_camera:=d405 gui:=true  # 실물 + D405 + GUI
 ```
 
-실물 D415는 `sudo apt install ros-humble-realsense2-camera`가 필요합니다.
+실물 D405(이전 D415는 `hand_camera:=d415`)는 `sudo apt install ros-humble-realsense2-camera`가 필요합니다.
 
 웹캠 창이 뜨면 손을 한 번 끝까지 쥐었다 펴고 엄지를 크게 돌린 뒤(자동 보정) 손을 움직입니다. 자세한 내용은 [hand_bringup README](src/hand_bringup/README.md)를 참고합니다.
 
@@ -86,7 +86,7 @@ ros2 launch hand_bringup pipeline.launch.py backend:=real enable_motion:=true ha
 pip install --user "pyqtgraph==0.13.7" "numpy<2"     # 최초 1회
 ros2 launch hand_bringup pipeline.launch.py gui:=true                                    # 시뮬레이션
 ros2 launch hand_bringup pipeline.launch.py backend:=real enable_motion:=true gui:=true  # 실물
-ros2 launch hand_bringup pipeline.launch.py backend:=real enable_motion:=true hand_camera:=d415 gui:=true  # 실물 + D415
+ros2 launch hand_bringup pipeline.launch.py backend:=real enable_motion:=true hand_camera:=d405 gui:=true  # 실물 + D405
 ```
 
 GUI 창 하나에 로봇 손(손끝·안쪽 마디·손바닥 11×5 힘 표시), 웹캠, 로봇 핸드 카메라, 힘 그래프가 나옵니다 (MuJoCo 창·웹캠 창은 열지 않음). 왼쪽 맨 위 **■ STOP / ▶ START** 버튼(또는 Esc = STOP)으로 로봇 손을 멈추고 다시 움직입니다.
