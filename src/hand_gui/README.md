@@ -21,6 +21,9 @@ pip install --user "pyqtgraph==0.13.7" "numpy<2"     # 최초 1회 (numpy 2는 R
 # 파이프라인과 함께 (GUI 창 하나만 뜸: MuJoCo 창·웹캠 창은 닫아 둠)
 ros2 launch hand_bringup pipeline.launch.py gui:=true
 
+# 실물 + D405 핸드 카메라
+ros2 launch hand_bringup pipeline.launch.py backend:=real enable_motion:=true hand_camera:=d405 gui:=true
+
 # 따로 (파이프라인이 이미 실행 중일 때)
 ros2 run hand_gui hand_gui
 ros2 run hand_gui hand_gui --ros-args -p data_dir:=~/tactile_dataset -p test_object:=ball
@@ -31,10 +34,13 @@ ros2 run hand_gui hand_gui --ros-args -p data_dir:=~/tactile_dataset -p test_obj
 | `data_dir` | `~/tactile_dataset` | 에피소드 저장 폴더 (화면에서도 변경 가능) |
 | `test_object` | `none` | `ball`: 시뮬레이션의 테스트 공을 로봇 손 화면에도 표시 |
 | `hand_xml` | `''` | AP002 MJCF 경로 (비우면 `external/rohand_mujoco/...`) |
-| `robot_camera_topic` | `/gripper_camera/color/image_raw` | 로봇 핸드 카메라 영상 (`sensor_msgs/Image`, rgb8/bgr8/mono8) |
+| `robot_camera_topic` | `/gripper_camera/color/image_raw` | 로봇 핸드 카메라 영상 (`sensor_msgs/Image`, rgb8/bgr8/mono8). `hand_bringup`이 D405일 때 `/hand_camera/d405/color/image_raw` (D415면 `/hand_camera/d415/...`)로 바꿈 |
+| `robot_camera_rotation` | `90` | 로봇 핸드 카메라 화면 회전 (반시계, 도). 표시만 바뀌고 녹화는 원본. `hand_bringup`은 가상 90, D405·D415 0 |
 | `webcam_topic` | `/webcam/image_annotated/compressed` | 웹캠 영상 (`sensor_msgs/CompressedImage`) |
 
 웹캠 영상은 `linux_webcam_sender --publish-image`가 보낸다 (`hand_bringup`은 자동으로 켬). `gui:=true`이면 웹캠 프로그램은 창 없이(`--no-window`) 돌고 MuJoCo 창도 열지 않는다. 웹캠 창의 보정 키(`F` 등)는 확인용 값에만 쓰이고, 로봇 제어용 보정은 자세 명령 노드가 자동으로 하므로 **보정** 탭의 초기화 버튼으로 충분하다. Windows에서 웹캠을 실행하는 경우(`team_sender:=remote`)에는 웹캠 칸이 비어 있다.
+
+원격 접속(VS Code Remote-SSH 등) 터미널에는 화면이 없어 GUI가 뜨지 않는다. 실행할 PC의 화면에 로그인되어 있으면 `export DISPLAY=:1 XAUTHORITY=/run/user/$(id -u)/gdm/Xauthority` 후 실행해 그 화면에 띄운다 (Jetson: [README](../../README.md#7-원격-접속-vs-code-remote-ssh에서-실행)).
 
 ## 화면
 
@@ -42,6 +48,7 @@ ros2 run hand_gui hand_gui --ros-args -p data_dir:=~/tactile_dataset -p test_obj
   - 표시는 AP002 센서 배치(매뉴얼 7.4)를 따른다.
   - 손끝 원(5개): 누르는 힘 N. 크기와 색(초록 → 빨강)은 지금까지의 최대값 기준이며 천천히 줄어든다. 옆에 부위 이름과 값.
   - 파란 화살표(손끝): 미끄러지는 힘. 길이 = 크기, 방향 = 센서가 보고한 각도를 손끝 좌표계에 그린 것. 실물 3D 힘 센서의 방향 축 기준은 아직 실물로 확인하지 않았다.
+  - 실물 AP002는 미끄러지는 힘이 없으면 방향을 무효(NaN)로 보낸다. 이때는 누르는 힘만 표시하고 화살표는 그리지 않는다 (수직힘이 유효하면 표시).
   - 안쪽 마디 원(검지·중지·약지): 누르는 힘 N. 손끝 원보다 작고, 옆에 값만 표시.
   - 손바닥 11×5 점: 칸마다 압력 색. 엄지 쪽 손목 모서리 5칸은 센서가 없어 그리지 않고, 값이 없으면 회색 테두리만 표시.
   - 힘 표시는 3D 장면 위에 2D로 덧그려서 손가락이나 물체에 가려지지 않는다. 시뮬레이션의 테스트 공은 반투명으로 보인다.

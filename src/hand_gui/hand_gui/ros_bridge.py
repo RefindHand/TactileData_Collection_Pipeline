@@ -31,18 +31,21 @@ def tactile_summary(kind, data):
     """(normal, tangential, direction_deg) of one sensor.
 
     force3d: data = [normal N, tangential N, direction_deg] per point; NaN / -1 = invalid.
-             normal is summed, shear is summed as vectors.
+             normal is summed, shear is summed as vectors. A point counts when its normal is
+             valid; an invalid tangential / direction only means no shear from that point
+             (the real AP002 reports direction 0xFFFF -> NaN whenever there is no shear).
     normal / dot_matrix: values per point / taxel (NaN = none); normal = sum, no shear.
     """
     values = np.asarray(data, dtype=np.float64)
     if kind == TACTILE_FORCE3D and values.size >= 3:
         points = values[: values.size // 3 * 3].reshape(-1, 3)
-        valid = np.isfinite(points).all(axis=1) & (points[:, 0] >= 0) & (points[:, 1] >= 0)
+        valid = np.isfinite(points[:, 0]) & (points[:, 0] >= 0)
         if not valid.any():
             return NAN, NAN, NAN
         points = points[valid]
-        angle = np.radians(points[:, 2])
-        shear = np.array([np.sum(points[:, 1] * np.cos(angle)), np.sum(points[:, 1] * np.sin(angle))])
+        sliding = np.isfinite(points[:, 1:]).all(axis=1) & (points[:, 1] >= 0)
+        tangent, angle = points[sliding, 1], np.radians(points[sliding, 2])
+        shear = np.array([np.sum(tangent * np.cos(angle)), np.sum(tangent * np.sin(angle))])
         tangential = float(np.hypot(*shear))
         direction = math.degrees(math.atan2(shear[1], shear[0])) if tangential > 0 else 0.0
         return float(points[:, 0].sum()), tangential, direction

@@ -74,7 +74,7 @@ launch 인자: `backend` (sim/real), `viewer`, `test_object` (ball/none), `port`
 
 - 손바닥 메시지는 차원이 2개(`[11 열, 5 행]`)이고, 값의 순서는 `열 × 5 + 행`입니다. 0열이 검지 쪽, 10열이 소지 쪽이고, 0행이 손목 쪽, 4행이 손가락 쪽입니다.
 - 엄지 쪽 손목 모서리의 5칸(0, 1, 5, 6, 10번)은 센서가 없어서 NaN입니다.
-- 값이 없거나 무효(0xFFFF)이면 NaN입니다.
+- 값이 없거나 무효(0xFFFF)이면 NaN입니다. 실물 손끝은 미끄러지는 힘이 없으면 방향이 무효라 `[수직 N, 0, NaN]`으로 들어옵니다 (수직 N은 유효).
 - 실물 원시값의 단위는 mN이라 1000으로 나눠 N으로 냅니다. 수직항력은 25 N에서 포화되는 것을 실물로 확인했습니다.
 - 손바닥은 레지스터 28개를 상위·하위 바이트 순으로 풀어 56개 값을 만들고, 그중 앞의 55개를 씁니다. 제조사 데모 코드는 상위 바이트만 읽지만, 실물에서는 하위 바이트도 변합니다.
 - 실물 확인은 `ros2 run finger_node tactile_probe`로 합니다. 읽기 전용이며, 누른 곳의 원시 레지스터 값을 보여 줍니다.
@@ -113,4 +113,4 @@ launch 인자: `backend` (sim/real), `viewer`, `test_object` (ball/none), `port`
 - 참고용으로 펌웨어 각도를 `/hand_hw/firmware_angle`(`JointState`, rad)로 따로 발행한다.
 - 위치·힘·펌웨어 각도 레지스터는 그룹마다 따로 읽는다. 실물 펌웨어는 그 사이의 안 쓰는 손가락 7~10번 주소가 낀 연속 읽기를 `IllegalAddress`로 거부한다.
 - **STOP / START** (두 백엔드 공통): `/hand_hw/motion_enable` (`std_msgs/Bool`)이 `false`이면 측정한 현재 자세를 목표로 한 번 쓰고(실물) 또는 현재 관절값으로 고정하고(시뮬레이션), `true`가 올 때까지 목표를 무시한다. 상태는 `/hand_hw/motion_state` (`running` / `stopped` / `read_only`).
-- 레지스터 주소는 제조사 데모(`oymotion/roh_gen2_demos`) 기준이다. 촉각 배치(손끝·안쪽 마디·손바닥 바이트 순서·mN 단위)는 `tactile_probe`로 실물에서 확인했다. 관절 위치·힘 쓰기 동작은 아직 실물로 검증하지 않았다.
+- 레지스터 주소는 제조사 데모(`oymotion/roh_gen2_demos`) 기준이다. 실물에서 확인한 것: 위치 읽기·목표 쓰기(`real_mode:=position`)로 손가락이 명령대로 움직임, 촉각 배치(손끝·안쪽 마디·손바닥 바이트 순서·mN 단위, `tactile_probe`). 아직 확인 안 한 것: `real_mode:=angle`, 실물 손끝 접선력 방향의 축 기준.
