@@ -97,6 +97,23 @@ ros2 run pose_command pose_command_node
 | `DEADBAND` | `5.0` | 양 끝 데드존 (deg). 가장 펴진·쥔 값에서 이 안쪽은 정확히 0.0 / 1.0 (MediaPipe 떨림 흡수) |
 | `REVERSE_THUMB_ROOT` | `True` | 엄지 뿌리 명령 방향 반전 (웹캠 테스트로 반대 방향 확인) |
 
+## 7-1. 사람별 보정 프로파일
+
+웹캠 스켈레톤은 손가락 중심선을 따르기 때문에 손끝이 맞닿아도(핀치) 살짝 벌어진 각도로 측정됩니다. 자동 보정(최소·최대 각도를 0~1로 직선 대응)만으로는 로봇이 덜 집으므로, 사람별 프로파일로 보완합니다 (`pose_command/calibration_profile.py`).
+
+- 기준 자세(펼침·주먹·핀치 등)마다 **사람 각도(deg)** 와 같은 자세를 만드는 **로봇 값(0~1)** 을 짝지어 저장하고, 그 사이는 꺾은선으로 대응합니다. 기록한 자세는 로봇이 정확히 재현합니다.
+- 파일: `~/hand_calibration_profiles/<이름>.json` (Hugging Face로 올라가는 `~/tactile_dataset`과 분리)
+- 기준점이 2개 미만인 손가락은 자동 보정 값을 그대로 씁니다. 자동 보정은 프로파일 사용 중에도 계속 학습합니다.
+- 만들기·불러오기는 GUI **보정** 탭의 "사람별 보정 프로파일"에서 합니다.
+
+| Topic | Type | 방향 | 내용 |
+|---|---|---|---|
+| `/pose_command/load_profile` | `std_msgs/String` | 입력 | 사람 이름. 빈 문자열 = 자동 보정. 없는 이름이면 경고 후 기존 유지 |
+| `/pose_command/human_angles` | `std_msgs/Float64MultiArray` | 출력 | 필터를 거친 사람 각도 (deg, 출력 배열 순서와 같음). 자세 기록용 |
+| `/pose_command/manual_targets` | `std_msgs/Float64MultiArray` | 입력 | GUI 슬라이더 목표값 (0~1 ×6). 들어오는 동안 웹캠 대신 이 값을 따르고, 마지막 메시지 후 1초(`MANUAL_TIMEOUT`)가 지나면 웹캠으로 돌아감 |
+
+시작할 때부터 프로파일을 쓰려면 `--ros-args -p calibration_profile:=<이름>`을 줍니다.
+
 ## 8. Limitations
 
 - 자동 보정은 범위가 넓어지기만 하므로, MediaPipe가 손을 잘못 인식한 순간의 값이 범위를 넓힐 수 있습니다. 동작이 둔해지면 보정을 초기화합니다.

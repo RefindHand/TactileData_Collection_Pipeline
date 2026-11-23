@@ -18,11 +18,13 @@ from PyQt5.QtCore import QPointF, Qt, QTimer
 from PyQt5.QtGui import QColor, QFont, QImage, QKeySequence, QPainter, QPen, QPixmap, QPolygonF
 from PyQt5.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QHBoxLayout,
-    QLabel, QLineEdit, QListWidget, QMainWindow, QMessageBox, QPushButton, QShortcut, QSplitter,
+    QLabel, QLineEdit, QListWidget, QMainWindow, QMessageBox, QPushButton, QScrollArea, QShortcut,
+    QSplitter,
     QTabWidget, QVBoxLayout, QWidget,
 )
 
 from finger_node.common import FINGERS, PROXIMAL_FINGERS, TACTILE_REGIONS
+from hand_gui.calibration_panel import CalibrationPanel
 from hand_gui.hand_view import HandView
 from hand_gui.recorder import Recorder
 from hand_gui import theme
@@ -425,11 +427,22 @@ class MainWindow(QMainWindow):
                                     '로봇 손가락이 덜/더 굽으면 초기화한 뒤 다시 한 번 쥐었다 펴세요.'))
         layout.addWidget(reset)
         layout.addSpacing(12)
+        self.calibration_panel = CalibrationPanel(self.bridge, self.status_message)
+        layout.addWidget(self.calibration_panel)
+        layout.addSpacing(12)
         layout.addWidget(self.heading('로봇 손 화면'))
         layout.addWidget(self.muted('드래그: 회전 · 휠: 확대/축소'))
         layout.addWidget(view)
         layout.addStretch(1)
-        return tab
+        # the calibration panel is tall: scroll instead of squeezing the widgets
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.NoFrame)
+        scroll.setWidget(tab)
+        return scroll
+
+    def status_message(self, text, ms=8000):
+        self.status.showMessage(text, ms)
 
     def reset_calibration(self):
         self.bridge.reset_calibration()

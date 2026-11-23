@@ -3,6 +3,7 @@
 The node spins in a background thread; the Qt thread reads copies through snapshot().
 Nothing here touches Qt.
 """
+import collections
 import math
 import threading
 import time
@@ -10,12 +11,15 @@ import time
 import numpy as np
 from rclpy.node import Node
 from sensor_msgs.msg import CompressedImage, Image, JointState
-from std_msgs.msg import Bool, Empty, Float32MultiArray, Float64, String
+from std_msgs.msg import Bool, Empty, Float32MultiArray, Float64, Float64MultiArray, String
 
 from finger_node.common import (
     FINGERS, HW_MOTION_ENABLE_TOPIC, HW_MOTION_STATE_TOPIC, HW_STATE_TOPIC, PROXIMAL_FINGERS, SIM_FULL_STATE_TOPIC, TACTILE_DOT_MATRIX,
     TACTILE_FORCE3D, TACTILE_REGIONS, finger_command_topic, finger_state_topic,
     finger_tactile_proximal_topic, finger_tactile_topic, hw_tactile_topic,
+)
+from pose_command.calibration_profile import (
+    HUMAN_ANGLES_TOPIC, LOAD_PROFILE_TOPIC, MANUAL_TARGETS_TOPIC,
 )
 
 WEBCAM_TOPIC = '/webcam/image_annotated/compressed'
@@ -111,6 +115,11 @@ class RosBridge(Node):
         self.motion_publisher = self.create_publisher(Bool, HW_MOTION_ENABLE_TOPIC, 10)
         self.motion_state = (None, 0.0)  # running | stopped | read_only, monotonic time
         self.create_subscription(String, HW_MOTION_STATE_TOPIC, self.on_motion_state, 10)
+        # calibration panel: human angles in, slider targets / profile name out
+        self.human_angles = collections.deque(maxlen=120)   # (monotonic time, [deg x6])
+        self.create_subscription(Float64MultiArray, HUMAN_ANGLES_TOPIC, self.on_human_angles, 10)
+        self.manual_publisher = self.create_publisher(Float64MultiArray, MANUAL_TARGETS_TOPIC, 10)
+        self.profile_publisher = self.create_publisher(String, LOAD_PROFILE_TOPIC, 1)
         self.get_logger().info(f'GUI listening: webcam {self.webcam_topic}, '
                                f'robot camera {self.robot_camera_topic}')
 
@@ -147,6 +156,10 @@ class RosBridge(Node):
         with self.lock:
             self.landmarks = (np.asarray(msg.data, np.float32), time.monotonic())
 
+    def on_human_angles(self, msg):
+        with self.lock:
+            self.human_angles.append((time.monotonic(), [float(v) for v in msg.data]))
+
     def on_motion_state(self, msg):
         with self.lock:
             self.motion_state = (msg.data, time.monotonic())
@@ -169,6 +182,19 @@ class RosBridge(Node):
     def reset_calibration(self):
         """Ask pose_command_node to forget its auto calibration."""
         self.reset_publisher.publish(Empty())
+
+    def set_manual_targets(self, targets):
+        """Robot targets (0~1, FINGERS order) from the calibration sliders."""
+        self.manual_publisher.publish(Float64MultiArray(data=[float(v) for v in targets]))
+
+    def load_profile(self, name):
+        """Ask pose_command_node to use this person's profile ('' = auto calibration)."""
+        self.profile_publisher.publish(String(data=name))
+
+    def human_angles_since(self, start):
+        """Human angle samples received after monotonic time start."""
+        with self.lock:
+            return [angles for stamp, angles in self.human_angles if stamp >= start]
 
     def snapshot(self):
         """Copy of everything the GUI needs, taken under the lock."""

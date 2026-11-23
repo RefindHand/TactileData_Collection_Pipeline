@@ -24,6 +24,17 @@ MIN_GAP_DEG = 3.0
 
 PROFILE_VERSION = 1
 
+# Topics shared by pose_command_node and the GUI calibration panel.
+# Load a profile: std_msgs/String with the person's name; empty string = auto calibration.
+LOAD_PROFILE_TOPIC = '/pose_command/load_profile'
+# Filtered human angles (deg, CHANNELS order), used to record reference poses.
+HUMAN_ANGLES_TOPIC = '/pose_command/human_angles'
+# Robot targets (0~1, CHANNELS order) from the GUI sliders. While these keep arriving the
+# node follows them instead of the webcam; it goes back to the webcam MANUAL_TIMEOUT
+# seconds after the last one (so a closed or crashed GUI cannot leave it in manual mode).
+MANUAL_TARGETS_TOPIC = '/pose_command/manual_targets'
+MANUAL_TIMEOUT = 1.0
+
 # One JSON file per person: ~/hand_calibration_profiles/<name>.json
 # (kept out of ~/tactile_dataset, which the GUI uploads to Hugging Face as a whole).
 PROFILE_DIR = Path.home() / 'hand_calibration_profiles'

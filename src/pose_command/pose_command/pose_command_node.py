@@ -9,7 +9,10 @@ from std_msgs.msg import Empty, Float32MultiArray, Float64, Float64MultiArray, S
 
 from finger_node.common import FINGER_LIMITS, FINGERS, finger_command_topic
 
-from pose_command.calibration_profile import CHANNELS, CalibrationProfile, profile_path
+from pose_command.calibration_profile import (
+    CHANNELS, HUMAN_ANGLES_TOPIC, LOAD_PROFILE_TOPIC, MANUAL_TARGETS_TOPIC, MANUAL_TIMEOUT,
+    CalibrationProfile, profile_path,
+)
 
 
 # Thumb rotation angle grows opposite to the robot's thumb_root
@@ -39,12 +42,6 @@ MIN_RANGE = 10.0    # deg; narrower ranges output 0 (open)
 DEADBAND = 5.0
 
 SAFE_TARGETS = [0.0] * 6
-
-# Per-person calibration profile (see calibration_profile.py).
-# Load: std_msgs/String with the person's name; empty string = back to auto calibration.
-LOAD_PROFILE_TOPIC = '/pose_command/load_profile'
-# Filtered human angles (deg, FINGERS order), used by the GUI to record reference poses.
-HUMAN_ANGLES_TOPIC = '/pose_command/human_angles'
 
 
 def clamp(value, low=0.0, high=1.0):
@@ -295,6 +292,16 @@ class PoseCommandNode(Node):
             10
         )
 
+        # GUI sliders (calibration): see MANUAL_TARGETS_TOPIC
+        self.manual_targets = None
+        self.manual_stamp = 0.0
+        self.create_subscription(
+            Float64MultiArray,
+            MANUAL_TARGETS_TOPIC,
+            self.manual_callback,
+            10
+        )
+
         # None = auto calibration only
         self.profile = None
         self.declare_parameter('calibration_profile', '')
@@ -363,6 +370,32 @@ class PoseCommandNode(Node):
             f'mapped {mapped} (others use auto calibration)'
         )
 
+    def manual_callback(self, msg):
+        values = list(msg.data)
+
+        if len(values) != len(FINGERS) or \
+                not all(math.isfinite(v) for v in values):
+            self.get_logger().warn('Invalid manual targets')
+            return
+
+        if self.manual_targets is None:
+            self.get_logger().info('MANUAL MODE - following GUI sliders')
+
+        self.manual_targets = [clamp(v) for v in values]
+        self.manual_stamp = time.monotonic()
+        self.publish_targets(self.manual_targets)
+
+    def in_manual_mode(self):
+        if self.manual_targets is None:
+            return False
+
+        if time.monotonic() - self.manual_stamp < MANUAL_TIMEOUT:
+            return True
+
+        self.manual_targets = None
+        self.get_logger().info('MANUAL MODE ended - following the webcam')
+        return False
+
     def publish_targets(self, targets):
         msg = Float64MultiArray()
         msg.data = [float(value) for value in targets]
@@ -378,6 +411,10 @@ class PoseCommandNode(Node):
             )
 
     def watchdog_callback(self):
+        if self.in_manual_mode():
+            self.publish_targets(self.manual_targets)
+            return
+
         now = time.monotonic()
 
         if self.last_valid_input is None:
@@ -477,6 +514,10 @@ class PoseCommandNode(Node):
                 auto if value is None else value
                 for value, auto in zip(mapped, targets)
             ]
+
+        # Sliders drive the robot during calibration; human angles are still published.
+        if self.in_manual_mode():
+            return
 
         self.publish_targets(targets)
 
