@@ -5,9 +5,11 @@ import time
 import rclpy
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
-from std_msgs.msg import Empty, Float32MultiArray, Float64, Float64MultiArray
+from std_msgs.msg import Empty, Float32MultiArray, Float64, Float64MultiArray, String
 
 from finger_node.common import FINGER_LIMITS, FINGERS, finger_command_topic
+
+from pose_command.calibration_profile import CHANNELS, CalibrationProfile, profile_path
 
 
 # Thumb rotation angle grows opposite to the robot's thumb_root
@@ -37,6 +39,12 @@ MIN_RANGE = 10.0    # deg; narrower ranges output 0 (open)
 DEADBAND = 5.0
 
 SAFE_TARGETS = [0.0] * 6
+
+# Per-person calibration profile (see calibration_profile.py).
+# Load: std_msgs/String with the person's name; empty string = back to auto calibration.
+LOAD_PROFILE_TOPIC = '/pose_command/load_profile'
+# Filtered human angles (deg, FINGERS order), used by the GUI to record reference poses.
+HUMAN_ANGLES_TOPIC = '/pose_command/human_angles'
 
 
 def clamp(value, low=0.0, high=1.0):
@@ -271,6 +279,29 @@ class PoseCommandNode(Node):
 
         self.ranges = [AutoRange(span) for span in DEFAULT_SPANS]
 
+        if tuple(CHANNELS) != tuple(FINGERS):
+            raise RuntimeError('calibration_profile.CHANNELS must equal FINGERS')
+
+        self.human_angles_publisher = self.create_publisher(
+            Float64MultiArray,
+            HUMAN_ANGLES_TOPIC,
+            10
+        )
+
+        self.create_subscription(
+            String,
+            LOAD_PROFILE_TOPIC,
+            lambda msg: self.load_profile(msg.data),
+            10
+        )
+
+        # None = auto calibration only
+        self.profile = None
+        self.declare_parameter('calibration_profile', '')
+        self.load_profile(
+            self.get_parameter('calibration_profile').value
+        )
+
         self.last_valid_input = None
         self.filtered_angles = None
         self.timed_out = False
@@ -303,6 +334,34 @@ class PoseCommandNode(Node):
             auto_range.reset()
 
         self.get_logger().info('Calibration reset')
+
+    def load_profile(self, name):
+        """Use the profile of this person; empty name = auto calibration only."""
+        name = name.strip()
+
+        if not name:
+            self.profile = None
+            self.get_logger().info('Calibration profile: none (auto calibration)')
+            return
+
+        try:
+            profile = CalibrationProfile.load(profile_path(name))
+        except (OSError, ValueError, KeyError) as error:
+            # Keep whatever was in use before; a typo must not change the robot's behaviour.
+            self.get_logger().warn(
+                f'Calibration profile {name!r} not loaded: {error}'
+            )
+            return
+
+        self.profile = profile
+        mapped = [
+            finger for k, finger in enumerate(FINGERS)
+            if profile.channel_ready(k)
+        ]
+        self.get_logger().info(
+            f'Calibration profile {name!r}: poses {sorted(profile.poses)}, '
+            f'mapped {mapped} (others use auto calibration)'
+        )
 
     def publish_targets(self, targets):
         msg = Float64MultiArray()
@@ -393,8 +452,13 @@ class PoseCommandNode(Node):
                 )
             ]
 
+        self.human_angles_publisher.publish(
+            Float64MultiArray(data=[float(a) for a in self.filtered_angles])
+        )
+
         targets = []
 
+        # Auto calibration always keeps learning, so it is ready as a fallback.
         for k, angle in enumerate(self.filtered_angles):
             self.ranges[k].update(angle)
             targets.append(self.ranges[k].normalize(angle))
@@ -404,6 +468,15 @@ class PoseCommandNode(Node):
         if REVERSE_THUMB_ROOT and \
                 self.ranges[thumb_root].bounds() is not None:
             targets[thumb_root] = 1.0 - targets[thumb_root]
+
+        # The profile stores robot values directly (thumb_root included),
+        # so its output is used as is; None = not enough poses for that channel.
+        if self.profile is not None:
+            mapped = self.profile.map(self.filtered_angles)
+            targets = [
+                auto if value is None else value
+                for value, auto in zip(mapped, targets)
+            ]
 
         self.publish_targets(targets)
 

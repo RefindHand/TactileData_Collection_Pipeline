@@ -24,6 +24,20 @@ MIN_GAP_DEG = 3.0
 
 PROFILE_VERSION = 1
 
+# One JSON file per person: ~/hand_calibration_profiles/<name>.json
+# (kept out of ~/tactile_dataset, which the GUI uploads to Hugging Face as a whole).
+PROFILE_DIR = Path.home() / 'hand_calibration_profiles'
+
+
+def profile_path(name):
+    """Path of a profile by person name; rejects names that would leave PROFILE_DIR."""
+    name = name.strip()
+
+    if not name or any(c in name for c in '/\\:') or name.startswith('.'):
+        raise ValueError(f'invalid profile name: {name!r}')
+
+    return PROFILE_DIR / f'{name}.json'
+
 
 def clean_points(pairs):
     """Sorted, merged, monotonic (human_deg, robot) points of one channel."""
